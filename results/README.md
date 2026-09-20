@@ -3,6 +3,16 @@
 Each experiment writes a CSV plus a `_meta.json` sidecar recording the git commit,
 library versions, seeds and runtime. Never edit these by hand.
 
+## Runs to date
+
+| file | grid | cells | runtime |
+|---|---|---|---|
+| `noise_degradation_2026-09-20.csv` | L = 2, 4, 6 | 240 | 19.0 min |
+| `noise_degradation_2026-09-20_L8.csv` | L = 8 | 144 | 38.6 min |
+
+Both use the same scenarios, `p` grid, seeds, 8 pairs per m and 1024 shots, so
+they concatenate directly. `--tag` keeps same-day runs from overwriting each other.
+
 ## `noise_degradation_<date>.csv`
 
 Degradation of the weight-register mismatch counter (`src/hwlib.py:mismatch_circuit`)

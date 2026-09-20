@@ -1,0 +1,44 @@
+{
+  "date": "2026-09-20",
+  "git_commit": "936e33ee61e5bbb4e6f92b1e95b08e1d53b96e76",
+  "qiskit": "2.5.2",
+  "qiskit_aer": "0.17.2",
+  "seed_pairs": 20260920,
+  "seed_sim": 761,
+  "shots": 1024,
+  "pairs_per_m": 8,
+  "levels": [
+    8
+  ],
+  "p_grid": [
+    0.0,
+    0.001,
+    0.003,
+    0.005,
+    0.01,
+    0.02,
+    0.03,
+    0.05
+  ],
+  "scenarios": {
+    "S1": "depolarizing only",
+    "S2": "depolarizing + thermal + readout"
+  },
+  "thermal": {
+    "t1": 100000.0,
+    "t2": 80000.0,
+    "gate_time_1q": 50.0,
+    "gate_time_2q": 300.0
+  },
+  "readout_error": 0.01,
+  "circuit_stats": {
+    "8": {
+      "k": 4,
+      "num_qubits": 28,
+      "depth": 78,
+      "cx": 130
+    }
+  },
+  "total_runtime_s": 2513.210664399987,
+  "rows": 144
+}
