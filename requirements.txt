@@ -2,5 +2,6 @@ qiskit>=2.1
 qiskit-aer
 numpy
 matplotlib
+pylatexenc
 pytest
 ipykernel
