@@ -62,10 +62,14 @@ These bound what may be claimed from this data.
    noise on qubits while other qubits are being acted on, and no explicit delay
    instructions. Qubits that sit idle through a long circuit are therefore modelled as
    healthier than they would really be — optimistic.
-3. **`rz` carries depolarizing noise** although `rz` is a virtual, error-free gate on IBM
-   hardware. These circuits are rz-heavy, so this is a deliberate pessimistic choice; it
-   keeps `assert_full_coverage` meaningful. S1/S2 are therefore not a literal model of any
-   specific device.
+3. **`rz` carries noise** although `rz` is a virtual, error-free gate on IBM hardware.
+   These circuits are rz-heavy (rz is ~49% of all gates at every `L`), so this is a
+   deliberate pessimistic choice; it keeps `assert_full_coverage` meaningful. S1/S2 are
+   therefore not a literal model of any specific device. **Measured sensitivity:**
+   rebuilding the S2 `p=0` point with `rz` fully noiseless recovers only +0.011 / +0.011 /
+   +0.020 in P(correct) for L = 2 / 4 / 6. The decoherence floor is therefore not an
+   artifact of this choice — it is dominated by the 300 ns CX duration (24.3 us of the
+   ~31.7 us circuit time at L=6) rather than by the 50 ns rz gates.
 4. **Basis-state inputs only.** Reads and windows are classical strings, so the ideal
    output is a single deterministic value. TVD is therefore not reported: it would equal
    `1 - p_correct` and carry no extra information. The distribution helpers in
