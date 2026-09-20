@@ -62,10 +62,12 @@ def test_sweep_cell_path_with_coverage_verification():
             noise_model = scenario_noise_model(scenario, p, probe.num_qubits)
             control = is_noiseless_control(scenario, p)
             assert bool(noise_model.to_dict()["errors"]) != control
-            counts, _ = run_cell(scenario, L, p, 1, pairs_per_m=1, shots=64,
-                                 rng=random.Random(0), noise_model=noise_model,
-                                 verify_coverage=not control)
+            counts, per_pair, _ = run_cell(
+                scenario, L, p, 1, pairs_per_m=1, shots=64,
+                rng=random.Random(0), noise_model=noise_model,
+                verify_coverage=not control)
             assert sum(counts.values()) == 64
+            assert len(per_pair) == 1 and sum(per_pair[0].values()) == 64
             if control:
                 assert counts == {1: 64}
 
@@ -115,6 +117,40 @@ def test_stratified_sampling_plants_exact_mismatch_count():
                 read, window = sample_stratified_pair(L, m, rng)
                 assert len(read) == len(window) == L
                 assert sum(a != b for a, b in zip(read, window)) == m
+
+
+def test_bias_shows_direction_where_mae_cannot():
+    """Signed error distinguishes under- from over-counting; MAE cannot."""
+    from experiments.noise_degradation import cell_metrics
+
+    under = cell_metrics({4: 500, 2: 500}, L=8, m=4, trials=1000)
+    over = cell_metrics({4: 500, 6: 500}, L=8, m=4, trials=1000)
+    assert under["mae"] == pytest.approx(over["mae"])       # MAE is blind to sign
+    assert under["bias"] == pytest.approx(-1.0)
+    assert over["bias"] == pytest.approx(+1.0)
+    assert cell_metrics({4: 1000}, L=8, m=4, trials=1000)["bias"] == 0.0
+
+
+def test_pair_bootstrap_widens_with_between_pair_spread():
+    """Pooled Wilson ignores between-pair variance; the pair bootstrap must not."""
+    from experiments.noise_degradation import pair_statistics, wilson_interval
+
+    shots = 1000
+    # Same pooled mean (0.5), but one case is consistent and the other is split.
+    consistent = [{0: 500, 1: 500} for _ in range(8)]
+    split = [{0: shots} if i % 2 else {1: shots} for i in range(8)]
+
+    agree = pair_statistics(consistent, m=0, shots=shots)
+    disagree = pair_statistics(split, m=0, shots=shots)
+
+    assert agree["pairs_used"] == disagree["pairs_used"] == 8
+    assert agree["pair_sd"] == pytest.approx(0.0, abs=1e-12)
+    assert disagree["pair_sd"] > 0.4
+    assert (disagree["boot_hi"] - disagree["boot_lo"]) > (agree["boot_hi"] - agree["boot_lo"])
+
+    # The pooled interval is identical for both, which is exactly the problem.
+    pooled = wilson_interval(4000, 8000)
+    assert pooled[1] - pooled[0] < disagree["boot_hi"] - disagree["boot_lo"]
 
 
 def test_wilson_interval_brackets_estimate():

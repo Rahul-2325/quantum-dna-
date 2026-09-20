@@ -10,7 +10,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 from aer_helpers import (control_distribution_aer, mismatch_circuit_measured,
                          transpile_for_noise)
-from noise_models import BASIS_GATES, assert_full_coverage, build_noise_model
+from noise_models import (BASIS_GATES, VIRTUAL_GATES, assert_full_coverage,
+                          build_noise_model)
 
 
 def _probe_circuit(gate, num_qubits):
@@ -58,7 +59,7 @@ def test_coverage_passes_on_a_full_model():
     qc, _ = mismatch_circuit_measured("ACG", "AGG")
     transpiled = transpile_for_noise(qc)
     noise_model = build_noise_model(qc.num_qubits, p_1q=0.001, p_2q=0.01)
-    assert_full_coverage(noise_model, transpiled)
+    assert_full_coverage(noise_model, transpiled, exempt=VIRTUAL_GATES)
 
 
 def test_coverage_includes_measure_only_when_readout_is_modelled():
@@ -67,11 +68,13 @@ def test_coverage_includes_measure_only_when_readout_is_modelled():
 
     without_readout = build_noise_model(qc.num_qubits, p_1q=0.001, p_2q=0.01)
     with pytest.raises(AssertionError, match="measure"):
-        assert_full_coverage(without_readout, transpiled, check_measure=True)
+        assert_full_coverage(without_readout, transpiled, check_measure=True,
+                             exempt=VIRTUAL_GATES)
 
     with_readout = build_noise_model(qc.num_qubits, p_1q=0.001, p_2q=0.01,
                                      readout_error=0.01)
-    assert_full_coverage(with_readout, transpiled, check_measure=True)
+    assert_full_coverage(with_readout, transpiled, check_measure=True,
+                         exempt=VIRTUAL_GATES)
 
 
 def test_coverage_raises_when_only_a_subset_of_qubits_carries_noise():
@@ -82,10 +85,51 @@ def test_coverage_raises_when_only_a_subset_of_qubits_carries_noise():
                                 qubits=[q for q in range(qc.num_qubits) if q not in bare])
 
     with pytest.raises(AssertionError) as excinfo:
-        assert_full_coverage(partial, transpiled)
+        assert_full_coverage(partial, transpiled, exempt=VIRTUAL_GATES)
     message = str(excinfo.value)
     assert "does not cover" in message
     assert any(str(qubit) in message for qubit in bare)
+
+
+def test_virtual_rz_leaves_rz_completely_noiseless():
+    """Default virtual_rz must give rz no depolarizing and no thermal relaxation."""
+    from noise_models import covered_operations, noisy_one_qubit_gates
+
+    assert noisy_one_qubit_gates(True) == ("sx", "x")
+    assert noisy_one_qubit_gates(False) == ("rz", "sx", "x")
+
+    thermal = dict(t1=100_000.0, t2=80_000.0, gate_time_1q=50.0, gate_time_2q=300.0)
+    virtual = build_noise_model(4, p_1q=0.01, p_2q=0.02, **thermal)
+    assert "rz" not in covered_operations(virtual)
+    for gate in ("sx", "x", "cx"):
+        assert gate in covered_operations(virtual)
+
+    legacy = build_noise_model(4, p_1q=0.01, p_2q=0.02, virtual_rz=False, **thermal)
+    assert "rz" in covered_operations(legacy)
+
+
+def test_coverage_exempts_virtual_gates_but_still_catches_real_gaps():
+    """Regression: virtual rz must not be reported as an uncovered gate."""
+    from noise_models import VIRTUAL_GATES
+
+    qc, _ = mismatch_circuit_measured("ACG", "AGG")
+    transpiled = transpile_for_noise(qc)
+    assert transpiled.count_ops().get("rz", 0) > 0
+
+    model = build_noise_model(qc.num_qubits, p_1q=0.001, p_2q=0.01)
+    with pytest.raises(AssertionError, match="rz"):
+        assert_full_coverage(model, transpiled)            # unexempted: rz looks missing
+    assert_full_coverage(model, transpiled, exempt=VIRTUAL_GATES)
+
+    # Exempting rz must not mask a genuinely uncovered qubit.
+    bare = list(range(qc.num_qubits - 2, qc.num_qubits))
+    partial = build_noise_model(
+        qc.num_qubits, p_1q=0.001, p_2q=0.01,
+        qubits=[q for q in range(qc.num_qubits) if q not in bare])
+    with pytest.raises(AssertionError) as excinfo:
+        assert_full_coverage(partial, transpiled, exempt=VIRTUAL_GATES)
+    assert "rz" not in str(excinfo.value)
+    assert any(str(q) in str(excinfo.value) for q in bare)
 
 
 def test_thermal_relaxation_rejects_t2_above_twice_t1():

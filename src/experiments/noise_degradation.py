@@ -18,9 +18,12 @@ import time
 from datetime import date
 from pathlib import Path
 
+import numpy as np
+
 from aer_helpers import (control_distribution_aer, control_distributions_aer,
                          mismatch_circuit_measured, transpile_for_noise)
-from noise_models import assert_full_coverage, build_noise_model
+from noise_models import (VIRTUAL_GATES, assert_full_coverage, build_noise_model,
+                          noisy_one_qubit_gates)
 
 BASES = "ACGT"
 P_GRID = (0.0, 0.001, 0.003, 0.005, 0.01, 0.02, 0.03, 0.05)
@@ -28,7 +31,13 @@ THERMAL = dict(t1=100_000.0, t2=80_000.0, gate_time_1q=50.0, gate_time_2q=300.0)
 READOUT_ERROR = 0.01
 SEED_PAIRS = 20260920
 SEED_SIM = 761
+SEED_BOOTSTRAP = 90210
+BOOTSTRAP_RESAMPLES = 10_000
 Z_95 = 1.959963984540054
+
+# rz is a zero-duration frame change on IBM hardware, so it carries no noise.
+VIRTUAL_RZ = True
+COVERAGE_EXEMPT = VIRTUAL_GATES if VIRTUAL_RZ else ()
 
 
 def sample_stratified_pair(L, m, rng):
@@ -57,13 +66,15 @@ def is_noiseless_control(scenario, p):
     return scenario == "S1" and p == 0.0
 
 
-def scenario_noise_model(scenario, p, num_qubits):
+def scenario_noise_model(scenario, p, num_qubits, virtual_rz=VIRTUAL_RZ):
     """S1 = depolarizing only; S2 = depolarizing + thermal relaxation + readout."""
     if scenario == "S1":
-        return build_noise_model(num_qubits, p_1q=p / 10, p_2q=p)
+        return build_noise_model(num_qubits, p_1q=p / 10, p_2q=p,
+                                 virtual_rz=virtual_rz)
     if scenario == "S2":
         return build_noise_model(num_qubits, p_1q=p / 10, p_2q=p,
-                                 readout_error=READOUT_ERROR, **THERMAL)
+                                 readout_error=READOUT_ERROR,
+                                 virtual_rz=virtual_rz, **THERMAL)
     raise ValueError(f"unknown scenario {scenario!r}")
 
 
@@ -72,16 +83,46 @@ def thresholds_for(L):
     return {"t0": 0, "t1": 1, "tq": L // 4}
 
 
+def bootstrap_mean_interval(values, resamples=BOOTSTRAP_RESAMPLES,
+                            seed=SEED_BOOTSTRAP, alpha=0.05):
+    """Percentile bootstrap CI for the mean, resampling the independent units.
+
+    Pairs, not shots, are the independent units here: shots within one pair
+    share a circuit, so a pooled binomial interval understates uncertainty
+    across the population of reads.
+    """
+    values = np.asarray(list(values), dtype=float)
+    if values.size == 0:
+        return float("nan"), float("nan")
+    rng = np.random.default_rng(seed)
+    draws = rng.integers(0, values.size, size=(resamples, values.size))
+    means = values[draws].mean(axis=1)
+    low, high = np.quantile(means, [alpha / 2, 1 - alpha / 2])
+    return float(low), float(high)
+
+
+def pair_statistics(per_pair_counts, m, shots, seed=SEED_BOOTSTRAP):
+    """Bootstrap CI and spread of P(correct) across pairs, the independent units."""
+    per_pair = [counts.get(m, 0) / shots for counts in per_pair_counts]
+    low, high = bootstrap_mean_interval(per_pair, seed=seed)
+    spread = float(np.std(per_pair, ddof=1)) if len(per_pair) > 1 else float("nan")
+    return {"boot_lo": low, "boot_hi": high, "pair_sd": spread,
+            "pairs_used": len(per_pair)}
+
+
 def cell_metrics(counts, L, m, trials):
-    """P(correct), Wilson CI, mean absolute error, P(out of range) and FP/FN rates."""
+    """P(correct), Wilson CI, error metrics, P(out of range) and FP/FN rates."""
     correct = counts.get(m, 0)
     p_correct = correct / trials
     low, high = wilson_interval(correct, trials)
     mae = sum(count * abs(value - m) for value, count in counts.items()) / trials
+    # Signed error shows DIRECTION: amplitude damping pulls the register toward
+    # |0>, which would under-report the count and make this negative.
+    bias = sum(count * (value - m) for value, count in counts.items()) / trials
     out_of_range = sum(count for value, count in counts.items() if value > L) / trials
 
     row = {"p_correct": p_correct, "wilson_lo": low, "wilson_hi": high,
-           "mae": mae, "p_out_of_range": out_of_range}
+           "mae": mae, "bias": bias, "p_out_of_range": out_of_range}
     for label, t in thresholds_for(L).items():
         # Only one of FP/FN is defined per cell, because m is fixed within a cell.
         if m <= t:
@@ -95,7 +136,11 @@ def cell_metrics(counts, L, m, trials):
 
 
 def run_cell(scenario, L, p, m, pairs_per_m, shots, rng, noise_model, verify_coverage=False):
-    """Pool `pairs_per_m` circuits x `shots` shots into one outcome histogram."""
+    """Run `pairs_per_m` circuits x `shots` shots.
+
+    Returns the pooled histogram, the per-pair histograms (kept because pairs
+    are the independent unit for the bootstrap) and the control width k.
+    """
     circuits = []
     k = None
     for _ in range(pairs_per_m):
@@ -104,17 +149,21 @@ def run_cell(scenario, L, p, m, pairs_per_m, shots, rng, noise_model, verify_cov
         transpiled = transpile_for_noise(qc)
         if verify_coverage:
             assert_full_coverage(noise_model, transpiled,
-                                 check_measure=(scenario == "S2"))
+                                 check_measure=(scenario == "S2"),
+                                 exempt=COVERAGE_EXEMPT)
         circuits.append(transpiled)
 
     distributions = control_distributions_aer(
         circuits, shots, noise_model=noise_model, seed=SEED_SIM + 7919 * L + 1000 * m)
 
+    per_pair_counts = [{value: round(probability * shots)
+                        for value, probability in distribution.items()}
+                       for distribution in distributions]
     counts = {}
-    for distribution in distributions:
-        for value, probability in distribution.items():
-            counts[value] = counts.get(value, 0) + round(probability * shots)
-    return counts, k
+    for pair_counts in per_pair_counts:
+        for value, count in pair_counts.items():
+            counts[value] = counts.get(value, 0) + count
+    return counts, per_pair_counts, k
 
 
 def circuit_stats(L, seed=SEED_PAIRS):
@@ -170,6 +219,51 @@ def estimate_grid_seconds(timings, pairs_per_m, shots, levels):
     return total
 
 
+def noise_audit(levels=(2, 4, 6, 8)):
+    """A1: transpiled gate mix per L, and exactly how each gate type is treated."""
+    print("Transpiled gate counts (basis cx/rz/sx/x, all-to-all connectivity)\n")
+    header = f"{'L':>3} {'qubits':>7} {'depth':>6} {'cx':>5} {'rz':>5} {'sx':>4} {'x':>4} {'rz share':>9}"
+    print(header)
+    print("-" * len(header))
+    for L in levels:
+        rng = random.Random(SEED_PAIRS)
+        read, window = sample_stratified_pair(L, L // 2, rng)
+        qc, _ = mismatch_circuit_measured(read, window)
+        transpiled = transpile_for_noise(qc)
+        ops = transpiled.count_ops()
+        gates = {g: ops.get(g, 0) for g in ("cx", "rz", "sx", "x")}
+        total = sum(gates.values())
+        print(f"{L:>3} {qc.num_qubits:>7} {transpiled.depth():>6} {gates['cx']:>5} "
+              f"{gates['rz']:>5} {gates['sx']:>4} {gates['x']:>4} "
+              f"{gates['rz'] / total:>8.1%}")
+
+    noisy = noisy_one_qubit_gates(VIRTUAL_RZ)
+    print(f"""
+How build_noise_model treats each gate type (VIRTUAL_RZ={VIRTUAL_RZ}):
+
+  cx      depolarizing(p_2q, 2 qubits)
+          composed with thermal_relaxation(T1={THERMAL['t1']:.0f}ns, T2={THERMAL['t2']:.0f}ns,
+          duration={THERMAL['gate_time_2q']:.0f}ns) on EACH of the two qubits   [S2 only]
+
+  sx, x   depolarizing(p_1q, 1 qubit)
+          composed with thermal_relaxation(T1, T2, duration={THERMAL['gate_time_1q']:.0f}ns)  [S2 only]
+
+  rz      {'NO depolarizing, NO thermal relaxation (virtual gate: a zero-duration'
+           if VIRTUAL_RZ else 'treated exactly like sx and x (legacy pessimistic mode)'}
+          {'frame change in software on IBM hardware, so it costs no time and no fidelity)'
+           if VIRTUAL_RZ else ''}
+
+  measure symmetric ReadoutError({READOUT_ERROR})                              [S2 only]
+
+  Noisy one-qubit gates: {', '.join(noisy) if noisy else 'none'}
+  p_1q = p/10 and p_2q = p, where p is the swept two-qubit error rate.
+
+Why this matters: rz is ~49% of every circuit. Charging it a {THERMAL['gate_time_1q']:.0f}ns duration
+added fictitious decay (170 x 50ns = 8.5us at L=8) on top of a circuit whose
+real cost is dominated by cx ({THERMAL['gate_time_2q']:.0f}ns each).
+""")
+
+
 def git_commit_hash():
     try:
         return subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
@@ -218,11 +312,12 @@ def run_sweep(levels, pairs_per_m, shots, results_dir, tag=None, force=False):
                 for m in range(L + 1):
                     rng = random.Random(SEED_PAIRS + 7919 * L + 104729 * m)
                     cell_started = time.perf_counter()
-                    counts, k = run_cell(scenario, L, p, m, pairs_per_m, shots,
-                                         rng, noise_model,
-                                         verify_coverage=(m == 0 and not noiseless_control))
+                    counts, per_pair, k = run_cell(
+                        scenario, L, p, m, pairs_per_m, shots, rng, noise_model,
+                        verify_coverage=(m == 0 and not noiseless_control))
                     trials = pairs_per_m * shots
                     metrics = cell_metrics(counts, L, m, trials)
+                    metrics.update(pair_statistics(per_pair, m, shots))
                     if scenario == "S1" and p == 0.0 and metrics["p_correct"] != 1.0:
                         raise RuntimeError(
                             f"noiseless S1 cell L={L} m={m} gave "
@@ -251,6 +346,10 @@ def run_sweep(levels, pairs_per_m, shots, results_dir, tag=None, force=False):
             "p_grid": list(P_GRID), "scenarios": {"S1": "depolarizing only",
                                                   "S2": "depolarizing + thermal + readout"},
             "thermal": THERMAL, "readout_error": READOUT_ERROR,
+            "virtual_rz": VIRTUAL_RZ,
+            "noisy_one_qubit_gates": list(noisy_one_qubit_gates(VIRTUAL_RZ)),
+            "bootstrap": {"resamples": BOOTSTRAP_RESAMPLES, "seed": SEED_BOOTSTRAP,
+                          "unit": "pair"},
             "circuit_stats": {str(L): stats[L] for L in levels},
             "total_runtime_s": total_seconds, "rows": len(rows)}
     meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
@@ -263,9 +362,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--benchmark", action="store_true",
                         help="time single circuits and estimate the grid runtime")
+    parser.add_argument("--audit", action="store_true",
+                        help="print the gate mix and how each gate type is made noisy")
     parser.add_argument("--shots", type=int, default=1024)
     parser.add_argument("--pairs-per-m", type=int, default=8)
-    parser.add_argument("--levels", type=int, nargs="+", default=[2, 4, 6])
+    parser.add_argument("--levels", type=int, nargs="+", default=None)
     parser.add_argument("--results-dir", default=str(
         Path(__file__).resolve().parents[2] / "results"))
     parser.add_argument("--tag", default=None,
@@ -274,9 +375,14 @@ def main():
                         help="overwrite existing output files")
     args = parser.parse_args()
 
+    if args.audit:
+        noise_audit(args.levels or (2, 4, 6, 8))
+        return
+
+    levels = args.levels or [2, 4, 6]
     if args.benchmark:
         timings = []
-        for L in args.levels:
+        for L in levels:
             for scenario in ("S1", "S2"):
                 timing = time_one_circuit(L, args.shots, scenario)
                 timings.append(timing)
@@ -285,13 +391,13 @@ def main():
                       f"cx={timing['cx']:<5} transpile={timing['transpile_s']:.2f}s "
                       f"run({args.shots} shots)={timing['run_s']:.2f}s "
                       f"per_shot={timing['per_shot_ms']:.3f}ms", flush=True)
-        estimate = estimate_grid_seconds(timings, args.pairs_per_m, args.shots, args.levels)
-        print(f"\nestimated full grid (levels={args.levels}, "
+        estimate = estimate_grid_seconds(timings, args.pairs_per_m, args.shots, levels)
+        print(f"\nestimated full grid (levels={levels}, "
               f"pairs_per_m={args.pairs_per_m}, shots={args.shots}): "
               f"{estimate / 60:.1f} min")
         return
 
-    run_sweep(args.levels, args.pairs_per_m, args.shots, args.results_dir,
+    run_sweep(levels, args.pairs_per_m, args.shots, args.results_dir,
               tag=args.tag, force=args.force)
 
 
