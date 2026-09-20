@@ -178,12 +178,26 @@ def git_commit_hash():
         return None
 
 
-def run_sweep(levels, pairs_per_m, shots, results_dir):
+def run_sweep(levels, pairs_per_m, shots, results_dir, tag=None, force=False):
     """Full grid over scenarios x p x L x m; writes CSV and metadata JSON."""
     import csv
 
     import qiskit
     import qiskit_aer
+
+    # Name the outputs before doing 20 minutes of work, so a name collision
+    # fails now rather than silently overwriting a previous run's data.
+    results_dir = Path(results_dir)
+    stamp = date.today().isoformat()
+    suffix = f"_{tag}" if tag else ""
+    csv_path = results_dir / f"noise_degradation_{stamp}{suffix}.csv"
+    meta_path = results_dir / f"noise_degradation_{stamp}{suffix}_meta.json"
+    if not force:
+        for path in (csv_path, meta_path):
+            if path.exists():
+                raise FileExistsError(
+                    f"{path} already exists; pass --tag to name this run separately "
+                    f"(or --force to overwrite)")
 
     started = time.perf_counter()
     stats = {L: circuit_stats(L) for L in levels}
@@ -224,10 +238,7 @@ def run_sweep(levels, pairs_per_m, shots, results_dir):
                           f"({time.perf_counter() - cell_started:.1f}s)", flush=True)
 
     total_seconds = time.perf_counter() - started
-    results_dir = Path(results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
-    stamp = date.today().isoformat()
-    csv_path = results_dir / f"noise_degradation_{stamp}.csv"
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
         writer.writeheader()
@@ -242,7 +253,6 @@ def run_sweep(levels, pairs_per_m, shots, results_dir):
             "thermal": THERMAL, "readout_error": READOUT_ERROR,
             "circuit_stats": {str(L): stats[L] for L in levels},
             "total_runtime_s": total_seconds, "rows": len(rows)}
-    meta_path = results_dir / f"noise_degradation_{stamp}_meta.json"
     meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
     print(f"\nwrote {csv_path} ({len(rows)} rows) and {meta_path} "
           f"in {total_seconds / 60:.1f} min")
@@ -258,6 +268,10 @@ def main():
     parser.add_argument("--levels", type=int, nargs="+", default=[2, 4, 6])
     parser.add_argument("--results-dir", default=str(
         Path(__file__).resolve().parents[2] / "results"))
+    parser.add_argument("--tag", default=None,
+                        help="suffix for the output filenames, e.g. L8")
+    parser.add_argument("--force", action="store_true",
+                        help="overwrite existing output files")
     args = parser.parse_args()
 
     if args.benchmark:
@@ -277,7 +291,8 @@ def main():
               f"{estimate / 60:.1f} min")
         return
 
-    run_sweep(args.levels, args.pairs_per_m, args.shots, args.results_dir)
+    run_sweep(args.levels, args.pairs_per_m, args.shots, args.results_dir,
+              tag=args.tag, force=args.force)
 
 
 if __name__ == "__main__":

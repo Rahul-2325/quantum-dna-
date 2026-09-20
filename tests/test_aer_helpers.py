@@ -1,6 +1,7 @@
 import pathlib
 import random
 import sys
+from datetime import date
 
 import pytest
 
@@ -67,6 +68,23 @@ def test_sweep_cell_path_with_coverage_verification():
             assert sum(counts.values()) == 64
             if control:
                 assert counts == {1: 64}
+
+
+def test_sweep_refuses_to_overwrite_existing_results(tmp_path):
+    """A second run on the same date must not clobber the first run's data."""
+    from experiments.noise_degradation import run_sweep
+
+    existing = tmp_path / f"noise_degradation_{date.today().isoformat()}.csv"
+    existing.write_text("precious,data\n1,2\n", encoding="utf-8")
+
+    with pytest.raises(FileExistsError, match="already exists"):
+        run_sweep([2], pairs_per_m=1, shots=8, results_dir=tmp_path)
+    assert existing.read_text(encoding="utf-8") == "precious,data\n1,2\n"
+
+    # A tag names the run separately, so it writes without touching the original.
+    run_sweep([2], pairs_per_m=1, shots=8, results_dir=tmp_path, tag="other")
+    assert existing.read_text(encoding="utf-8") == "precious,data\n1,2\n"
+    assert (tmp_path / f"noise_degradation_{date.today().isoformat()}_other.csv").exists()
 
 
 def test_mps_matches_statevector():
