@@ -1,0 +1,6 @@
+qiskit>=2.1
+qiskit-aer
+numpy
+matplotlib
+pytest
+ipykernel
