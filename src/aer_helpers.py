@@ -18,6 +18,21 @@ def control_distribution_statevector(qc, k):
     return {int(bits, 2): p for bits, p in probabilities.items()}
 
 
+def control_distributions_aer(circuits, shots, noise_model=None, seed=None,
+                              method="matrix_product_state"):
+    """Distributions for several circuits submitted as a single Aer job.
+
+    Building the simulator (and attaching a per-qubit noise model) costs roughly
+    0.2s, so batching a cell's circuits into one job rather than one job each is
+    a large saving; Aer also parallelises across the circuits in a job.
+    """
+    simulator = AerSimulator(noise_model=noise_model, method=method)
+    result = simulator.run(list(circuits), shots=shots, seed_simulator=seed).result()
+    return [{int(bits, 2): count / shots
+             for bits, count in result.get_counts(index).items()}
+            for index in range(len(circuits))]
+
+
 def control_distribution_aer(qc, shots, noise_model=None, seed=None,
                              method="matrix_product_state"):
     """Full {value: probability} distribution over `qc`'s measured register, from Aer shots.
@@ -29,9 +44,8 @@ def control_distribution_aer(qc, shots, noise_model=None, seed=None,
     read register stays in a product basis state) and is ~23x faster than dense
     statevector at L=6; test_mps_matches_statevector pins that equivalence.
     """
-    simulator = AerSimulator(noise_model=noise_model, method=method)
-    counts = simulator.run(qc, shots=shots, seed_simulator=seed).result().get_counts()
-    return {int(bits, 2): count / shots for bits, count in counts.items()}
+    return control_distributions_aer([qc], shots, noise_model=noise_model,
+                                     seed=seed, method=method)[0]
 
 
 def mismatch_circuit_measured(read, ref_window):

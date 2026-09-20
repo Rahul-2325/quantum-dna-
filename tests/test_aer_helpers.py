@@ -45,6 +45,30 @@ def test_measured_circuit_reproduces_classical_counts():
             assert distribution.get(m, 0.0) > 0.999
 
 
+def test_sweep_cell_path_with_coverage_verification():
+    """Exercise run_cell exactly as the sweep calls it, including the coverage check.
+
+    Regression: the S1 p=0 control has an empty noise model by construction, so
+    verifying coverage there used to abort the sweep on its first cell.
+    """
+    from experiments.noise_degradation import (P_GRID, is_noiseless_control,
+                                               run_cell, scenario_noise_model)
+
+    L = 2
+    probe, _ = mismatch_circuit_measured("A" * L, "A" * L)
+    for scenario in ("S1", "S2"):
+        for p in (0.0, P_GRID[1]):
+            noise_model = scenario_noise_model(scenario, p, probe.num_qubits)
+            control = is_noiseless_control(scenario, p)
+            assert bool(noise_model.to_dict()["errors"]) != control
+            counts, _ = run_cell(scenario, L, p, 1, pairs_per_m=1, shots=64,
+                                 rng=random.Random(0), noise_model=noise_model,
+                                 verify_coverage=not control)
+            assert sum(counts.values()) == 64
+            if control:
+                assert counts == {1: 64}
+
+
 def test_mps_matches_statevector():
     """The sweep runs on MPS; it must agree with dense statevector, noisy and clean."""
     from experiments.noise_degradation import scenario_noise_model

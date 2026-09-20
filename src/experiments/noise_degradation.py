@@ -18,8 +18,8 @@ import time
 from datetime import date
 from pathlib import Path
 
-from aer_helpers import (control_distribution_aer, mismatch_circuit_measured,
-                         transpile_for_noise)
+from aer_helpers import (control_distribution_aer, control_distributions_aer,
+                         mismatch_circuit_measured, transpile_for_noise)
 from noise_models import assert_full_coverage, build_noise_model
 
 BASES = "ACGT"
@@ -50,6 +50,11 @@ def wilson_interval(successes, trials, z=Z_95):
     spread = z * math.sqrt(p_hat * (1 - p_hat) / trials
                            + z ** 2 / (4 * trials ** 2)) / denominator
     return centre - spread, centre + spread
+
+
+def is_noiseless_control(scenario, p):
+    """S1 at p=0 is the exactness control: no depolarizing, no thermal, no readout."""
+    return scenario == "S1" and p == 0.0
 
 
 def scenario_noise_model(scenario, p, num_qubits):
@@ -91,18 +96,22 @@ def cell_metrics(counts, L, m, trials):
 
 def run_cell(scenario, L, p, m, pairs_per_m, shots, rng, noise_model, verify_coverage=False):
     """Pool `pairs_per_m` circuits x `shots` shots into one outcome histogram."""
-    counts = {}
+    circuits = []
     k = None
-    for index in range(pairs_per_m):
+    for _ in range(pairs_per_m):
         read, window = sample_stratified_pair(L, m, rng)
         qc, k = mismatch_circuit_measured(read, window)
         transpiled = transpile_for_noise(qc)
         if verify_coverage:
             assert_full_coverage(noise_model, transpiled,
                                  check_measure=(scenario == "S2"))
-        distribution = control_distribution_aer(
-            transpiled, shots, noise_model=noise_model,
-            seed=SEED_SIM + 1000 * m + index)
+        circuits.append(transpiled)
+
+    distributions = control_distributions_aer(
+        circuits, shots, noise_model=noise_model, seed=SEED_SIM + 7919 * L + 1000 * m)
+
+    counts = {}
+    for distribution in distributions:
         for value, probability in distribution.items():
             counts[value] = counts.get(value, 0) + round(probability * shots)
     return counts, k
@@ -185,12 +194,19 @@ def run_sweep(levels, pairs_per_m, shots, results_dir):
             num_qubits = stats[L]["num_qubits"]
             for p in P_GRID:
                 noise_model = scenario_noise_model(scenario, p, num_qubits)
+                # S1 at p=0 is the noiseless control: depolarizing_error(0) is the
+                # identity channel, which Aer drops, so the model is empty by design
+                # and there is no coverage to check.
+                noiseless_control = is_noiseless_control(scenario, p)
+                if noiseless_control and noise_model.to_dict()["errors"]:
+                    raise RuntimeError(
+                        f"{scenario} p={p} was expected to be noiseless but carries errors")
                 for m in range(L + 1):
                     rng = random.Random(SEED_PAIRS + 7919 * L + 104729 * m)
                     cell_started = time.perf_counter()
                     counts, k = run_cell(scenario, L, p, m, pairs_per_m, shots,
                                          rng, noise_model,
-                                         verify_coverage=(m == 0))
+                                         verify_coverage=(m == 0 and not noiseless_control))
                     trials = pairs_per_m * shots
                     metrics = cell_metrics(counts, L, m, trials)
                     if scenario == "S1" and p == 0.0 and metrics["p_correct"] != 1.0:
