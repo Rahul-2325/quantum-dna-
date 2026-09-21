@@ -61,6 +61,67 @@ same reasoning as the L=8 noise-degradation runs: the adder's mismatch
 circuit is measurably slower per cell than the phase counter's, and the two
 counters together triple the total grid size versus a single-counter sweep).
 
+## `depth_optimal_counter.py` (task 2: depth-optimal rewrite)
+
+CLAUDE.md flagged the old v1 depth-optimal attempt (`Untitled5.ipynb`) as
+WRONG -- success ~8%, needing "a real rewrite: GHZ/repetition-code fan-out +
+semiclassical IQFT with classically controlled Rz (Qiskit dynamic circuits)."
+`src/depth_optimal_counter.py` is that rewrite, verified against
+`weight_unitary` (Algorithm 2) on random superposition inputs, not just basis
+states -- `tests/test_depth_optimal_counter.py`, 10/10 passing.
+
+**Three things needed empirical resolution, not just a literal reading of
+Definition IV.1** (documented in the module docstring): the rotation index
+used per round is REVERSED relative to round number (round 1, unconditioned,
+uses the largest rotation), the classically-conditioned phase correction
+needs a NEGATIVE sign, and round 1's extracted bit is the LEAST significant
+bit of the weight. Each was found by brute-forcing the 8 sign/order
+combinations against the classical weight (zero mismatches for the winning
+combination, n=2,3,4 exhaustive), not re-derived analytically. An initial
+naive reading gave near-random output (~13-25% success) -- the same failure
+signature the old v1 attempt had, which is itself evidence the naive reading
+is a genuinely different, wrong circuit rather than a relabeling of a
+correct one.
+
+**A second, unrelated bug surfaced during verification: Aer's
+`matrix_product_state` method gives visibly wrong results on this circuit's
+superposition inputs** (TVD ~0.14-0.20 against the true distribution) even
+though every basis-state input is still exactly correct under MPS. Dense
+`statevector` gives TVD ~0.003-0.02 (shot-noise-consistent) on the identical
+circuit. This is isolated to MPS's handling of THIS circuit's mid-circuit
+measurement + GHZ-entangled parity + classical feedback -- every other
+circuit in this project (weight_unitary, plus_one_counter, mismatch_circuit*)
+is purely unitary with a single final measurement, and MPS is proven exact
+for those (`test_mps_matches_statevector`). Use `statevector`, not MPS, for
+this circuit with anything but classical basis-state inputs;
+`test_mps_is_wrong_on_this_circuit_regression_guard` pins this so it isn't
+silently "optimized" back onto MPS later.
+
+**One documented simplification, not a silent one:** the repetition-code
+"fan-out" step (encoding one control qubit into n physical copies) uses a
+standard O(log n)-depth CNOT tree, not the paper's own constant-depth
+construction (which needs machinery from a separate paper, Quek-Kaur-Wilde,
+not reimplemented here). This is why the depth numbers below beat Algorithm
+2 by a growing margin but likely don't hit the paper's literal O(log n)
+bound -- the qualitative "depth-optimal beats Algorithm 2 and the gap grows
+with n" claim is intact; the exact asymptotic is not independently confirmed.
+
+Depth preview (basis gates cx/rz/sx/x/h/reset/measure, optimization_level=1):
+
+| n | k | depth-opt qubits | depth-opt depth | Alg. 2 qubits | Alg. 2 depth |
+|---|---|---|---|---|---|
+| 8 | 4 | 16 | 49 | 12 | 67 |
+| 16 | 5 | 32 | 69 | 21 | 103 |
+| 32 | 6 | 64 | 92 | 38 | 163 |
+
+Not yet done: this counter is not wired into `mismatch_circuit` or the noise
+harness -- it exists and is verified standalone, matching the scope of
+"rewrite... verify against Alg.2 on random inputs." Whether it beats
+Algorithm 2 or the adder under actual noise (not just gate-count/depth) is a
+separate, unanswered question, consistent with how every other
+resource-only preview in this project has been kept apart from a real noise
+run.
+
 ## Runs to date
 
 | file | grid | rz convention | cells | runtime |
