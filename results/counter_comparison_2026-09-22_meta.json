@@ -1,0 +1,77 @@
+{
+  "date": "2026-09-22",
+  "git_commit": "8a2d4a4823bfc519a7fbd531632b2df90042425f",
+  "qiskit": "2.5.2",
+  "qiskit_aer": "0.17.2",
+  "seed_pairs": 20260920,
+  "seed_sim": 761,
+  "shots": 1024,
+  "pairs_per_m": 8,
+  "levels": [
+    2,
+    4,
+    6
+  ],
+  "p_grid": [
+    0.0,
+    0.001,
+    0.003,
+    0.005,
+    0.01,
+    0.02,
+    0.03,
+    0.05
+  ],
+  "counters": [
+    "adder",
+    "phase"
+  ],
+  "virtual_rz": true,
+  "thermal": {
+    "t1": 100000.0,
+    "t2": 80000.0,
+    "gate_time_1q": 50.0,
+    "gate_time_2q": 300.0
+  },
+  "readout_error": 0.01,
+  "circuit_stats": {
+    "adder_2": {
+      "k": 2,
+      "num_qubits": 8,
+      "depth": 25,
+      "cx": 18
+    },
+    "adder_4": {
+      "k": 3,
+      "num_qubits": 16,
+      "depth": 61,
+      "cx": 51
+    },
+    "adder_6": {
+      "k": 3,
+      "num_qubits": 22,
+      "depth": 117,
+      "cx": 95
+    },
+    "phase_2": {
+      "k": 2,
+      "num_qubits": 8,
+      "depth": 36,
+      "cx": 25
+    },
+    "phase_4": {
+      "k": 3,
+      "num_qubits": 15,
+      "depth": 54,
+      "cx": 57
+    },
+    "phase_6": {
+      "k": 3,
+      "num_qubits": 21,
+      "depth": 60,
+      "cx": 81
+    }
+  },
+  "total_runtime_s": 2852.7498451999854,
+  "rows": 480
+}

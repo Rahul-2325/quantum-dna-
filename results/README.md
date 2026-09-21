@@ -39,6 +39,28 @@ four `L`. Both counters' own ancilla structure is already garbage-free forward
 (phase has none beyond its output register; the adder's carry scratch
 self-cleans per increment), so (i) qubit counts already reflect that.
 
+## `counter_comparison_2026-09-22.csv`
+
+C4: the adder (Paper 1) vs phase (Paper 2) mismatch counters, run through the
+identical noise harness as `noise_degradation.py` (same scenarios, p-grid,
+strata, seeds, shots, `virtual_rz`) with only the circuit builder swapped.
+480 rows = 2 counters x 2 scenarios x 8 p-values x sum(L+1 for L in 2,4,6).
+Same columns as `noise_degradation_*.csv` plus a `counter` column
+(`"adder"`/`"phase"`). All 30 S1 p=0 control cells are exactly 1.0.
+`figures/6_counter_comparison_noise.png` plots P(correct) vs p per L, S2.
+
+**Result: not a clean win for either counter.** The adder wins at every p
+for L=2 and L=4 (e.g. L=4, p=0.01: adder 0.677 vs phase 0.606). At L=6 the
+two curves are close and **cross**: adder leads at p<=0.001, phase overtakes
+from p=0.005 up (L=6, p=0.05: adder 0.177 vs phase 0.198). This is consistent
+with the resource preview in `figures/5_counter_comparison.png`: the adder
+has fewer CX at small L but the phase counter's shallower depth (which
+matters more as thermal relaxation time accumulates) starts to dominate as L
+grows. **L=8 is not yet run** for this comparison (queued as a separate leg,
+same reasoning as the L=8 noise-degradation runs: the adder's mismatch
+circuit is measurably slower per cell than the phase counter's, and the two
+counters together triple the total grid size versus a single-counter sweep).
+
 ## Runs to date
 
 | file | grid | rz convention | cells | runtime |
