@@ -1,31 +1,39 @@
 """C3: resource table for the adder (Paper 1) vs phase (Paper 2) mismatch counters.
 
-For each L, reports qubits/CX/depth for:
-  (i)  count only            -- the circuit as built (mismatch_circuit / mismatch_circuit_adder)
-  (ii) count + garbage uncompute -- needed whenever a counter is used coherently
-                                     inside a larger oracle (its own qubits must
-                                     return to |0> so they can be reused / don't
-                                     leak phase into an outer computation)
+For each L, reports qubits/CX/depth for the COUNTER ITSELF -- plus_one_counter(L)
+vs weight_unitary(L), acting on the L flag qubits, decoupled from the
+mismatch-circuit-specific prefix (read load / XOR / OR-flag), which is shared
+infrastructure common to both and not part of what's being compared here:
 
-Both counters turn out garbage-free already for (i): weight_unitary's control
-register is the intended OUTPUT (not garbage) so nothing needs uncomputing,
-and plus_one_counter's temp/carry scratch is proven (in
-tests/test_plus_one_counter.py) to already return to |0> after every
-increment, without any extra gates. So (ii) reported here is the SAME
-circuit run forward then immediately inverted and appended -- a literal
-compute+uncompute pair -- which is what "used inside an oracle and then
-released" actually costs, even though the counter's own scratch needed no
-help getting back to |0> on its own.
+  (i)  count only     -- the counter as used in our actual experiments: compute
+                          the weight into k qubits and read it out (measure or
+                          pass downstream). This is what mismatch_circuit and
+                          mismatch_circuit_adder actually run.
+  (ii) count + uncompute -- append the counter's own inverse, returning EVERY
+                          qubit the counter touched (including its k-qubit
+                          weight/control register) to |0>. This is the cost of
+                          using the counter as a borrowed subroutine inside a
+                          larger coherent oracle that cannot leave any residual
+                          entanglement behind when it releases the qubits --
+                          different from just letting plus_one_counter's OWN
+                          carry/temp scratch self-clean (which it already does,
+                          per tests/test_plus_one_counter.py; that is not what
+                          (ii) is measuring -- (ii) uncomputes the OUTPUT too).
+
+An earlier version of this script mistakenly uncomputed the full mismatch
+circuit (prefix included), which roughly doubles CX for both counters
+regardless of any real difference between them and so measured nothing
+about the counters specifically. Fixed to isolate the counter alone.
 """
 from __future__ import annotations
 
 import csv
 from pathlib import Path
 
-from qiskit import transpile
+from qiskit import QuantumCircuit, transpile
 
-from hwlib import mismatch_circuit
-from mismatch_adder import mismatch_circuit_adder
+from hwlib import weight_unitary
+from plus_one_counter import plus_one_counter
 
 BASIS_GATES = ["cx", "rz", "sx", "x"]
 LEVELS = (2, 4, 6, 8)
@@ -38,21 +46,33 @@ def _stats(qc, seed=1234):
 
 
 def _stats_with_uncompute(qc, seed=1234):
-    """count + its own inverse appended, transpiled together (not two separate transpiles,
-    since gate cancellation across the seam is exactly what a real oracle usage gets)."""
-    round_trip = qc.compose(qc.inverse())
+    """count + its own inverse appended.
+
+    A `barrier` sits between the two halves. Without it, `qc.compose(qc.inverse())`
+    with nothing in between is mathematically the identity, and Qiskit's
+    optimizer can find and cancel that (fully, for some L; only partially for
+    others, and even a spurious *negative* apparent cost at L=2 -- an early
+    version of this function hit exactly that and it was a transpiler
+    cancellation artifact, not a real measurement). Any genuine oracle usage
+    has a real payload operation between compute and uncompute that blocks
+    this cancellation, so the barrier is the physically honest stand-in for
+    that -- it forces (ii) to actually mean "compute, then separately
+    uncompute", which any real use of this counter would.
+    """
+    round_trip = qc.copy()
+    round_trip.barrier()
+    round_trip.compose(qc.inverse(), inplace=True)
     return _stats(round_trip, seed=seed)
 
 
 def build_table(levels=LEVELS):
     rows = []
     for L in levels:
-        read, window = "A" * L, ("C" * (L // 2)) + ("A" * (L - L // 2))
-        adder, k_a = mismatch_circuit_adder(read, window)
-        phase, k_p = mismatch_circuit(read, window)
+        adder, k_a, t_width = plus_one_counter(L)
+        phase, k_p = weight_unitary(L)
         assert k_a == k_p
 
-        row = {"L": L, "k": k_a}
+        row = {"L": L, "k": k_a, "adder_temp_qubits": t_width}
         for label, qc in (("adder", adder), ("phase", phase)):
             count_only = _stats(qc)
             with_uncompute = _stats_with_uncompute(qc)
@@ -78,10 +98,10 @@ def print_table(rows):
               f"{row['phase_depth_i']:>14}")
     print()
     for row in rows:
-        print(f"L={row['L']}: uncompute adds {row['adder_uncompute_adds_cx']} CX to adder, "
-              f"{row['phase_uncompute_adds_cx']} CX to phase "
-              f"(both counters' own scratch is already garbage-free without it -- "
-              f"see module docstring)")
+        note = (f" ({row['adder_temp_qubits']} temp qubits, already self-cleaning per "
+                f"increment)" if row["adder_temp_qubits"] else " (no temp qubits needed)")
+        print(f"L={row['L']}: uncompute adds {row['adder_uncompute_adds_cx']} CX to adder"
+              f"{note}, {row['phase_uncompute_adds_cx']} CX to phase")
 
 
 def main():

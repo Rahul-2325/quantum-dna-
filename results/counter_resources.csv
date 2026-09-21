@@ -1,0 +1,5 @@
+L,k,adder_temp_qubits,adder_qubits_i,adder_cx_i,adder_depth_i,adder_qubits_ii,adder_cx_ii,adder_depth_ii,adder_uncompute_adds_cx,phase_qubits_i,phase_cx_i,phase_depth_i,phase_qubits_ii,phase_cx_ii,phase_depth_ii,phase_uncompute_adds_cx
+2,2,0,4,6,13,4,14,27,8,4,13,25,4,26,49,13
+4,3,1,8,27,50,8,62,110,35,7,33,43,7,66,85,33
+6,3,1,10,59,106,10,134,236,75,9,45,49,9,90,98,45
+8,4,2,14,102,181,14,230,405,128,12,82,67,12,164,133,82

@@ -3,6 +3,42 @@
 Each experiment writes a CSV plus a `_meta.json` sidecar recording the git commit,
 library versions, seeds and runtime. Never edit these by hand.
 
+## `counter_resources.csv`
+
+Produced by `src/experiments/counter_resources.py`. Resource comparison of the two
+counters ALONE (`plus_one_counter(L)` vs `weight_unitary(L)`, acting on `L` bits
+directly), decoupled from the DNA-mismatch prefix (read load / XOR / OR-flag) that
+both `mismatch_circuit` and `mismatch_circuit_adder` share -- the prefix is common
+infrastructure, not part of what differs between the counters.
+
+Columns: `{adder,phase}_{qubits,cx,depth}_i` = the counter as actually used in our
+experiments (compute the weight, read it out). `{adder,phase}_{qubits,cx,depth}_ii` =
+compute, then uncompute the counter's own output register too -- the cost of using
+the counter as a borrowed subroutine inside a larger coherent oracle that must
+release its qubits clean. `{adder,phase}_uncompute_adds_cx` = `cx_ii - cx_i`.
+`adder_temp_qubits` = the adder's carry/scratch width (`max(0, k-2)`); note this
+scratch is *already* self-cleaning after every single increment (proven in
+`tests/test_plus_one_counter.py`) regardless of whether the OUTPUT register is
+later uncomputed -- (ii) is about the output, not this scratch.
+
+**A methodology note worth keeping:** `qc.compose(qc.inverse())` with nothing
+between the two halves is mathematically the identity operation, and Qiskit's
+optimizer can and does find that -- an early version of this script measured
+exactly that (no barrier between forward and inverse) and got a circuit
+transpiled down to *fewer* CX than the forward-only version at L=2, which is not
+a real result, just the transpiler being good at algebra. A `barrier` now sits
+between compute and uncompute, standing in for the real payload operation that
+any genuine oracle usage would have there, which blocks that cancellation and
+makes (ii) mean "compute, then separately uncompute" rather than "an
+optimizer-dependent fraction of the identity."
+
+Current numbers (2026-09-22): phase's (ii) is exactly 2x (i) at every `L` -- a
+clean, symmetric round trip once cross-boundary cancellation is blocked. The
+adder's (ii) is consistently ~2.25-2.33x (i), not exactly double, across all
+four `L`. Both counters' own ancilla structure is already garbage-free forward
+(phase has none beyond its output register; the adder's carry scratch
+self-cleans per increment), so (i) qubit counts already reflect that.
+
 ## Runs to date
 
 | file | grid | rz convention | cells | runtime |
