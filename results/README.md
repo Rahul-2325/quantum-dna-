@@ -296,6 +296,38 @@ treatment in "How build_noise_model treats each gate type" above). The
 noise that flattens the outcome distribution, which is what depolarizing
 noise does.
 
+## Combined mitigation: post-selection stacked with ZNE (task 3, extension)
+
+`src/experiments/combined_mitigation.py`: at EACH ZNE noise scale (1, 3, 5),
+discard out-of-range shots before computing that scale's P(correct), then
+exponentially extrapolate the resulting POST-SELECTED series to scale=0 --
+rather than extrapolating the raw series, which is what the standalone ZNE
+probe above did. Whether stacking actually beats either technique alone
+(rather than, say, folding's higher out-of-range rate at large scales eating
+into the sample used for extrapolation) is checked directly below, not
+assumed.
+
+**It does compose, and substantially so.** Same probe points as the
+standalone ZNE section above:
+
+| L | p | raw | ZNE alone | **post-select + ZNE** |
+|---|---|---|---|---|
+| 4 | 0.01 | 0.604 | 0.811 | **0.878** |
+| 6 | 0.01 | 0.509 | 0.796 | **0.821** |
+| 8 | 0.01 | 0.351 | 0.814 | **0.941** |
+| 4 | 0.02 | 0.456 | 0.802 | **0.935** |
+
+At L=8, p=0.01, stacking gets to 0.941 against a true value of 1.0 -- within
+6 percentage points, from a raw measurement that was wrong more than half the
+time. Discard rates grow with fold scale as expected (more folding exposes
+more noise, so more impossible outcomes to filter): at L=8 the rate goes
+20% -> 34% -> 39% across scales 1/3/5, and post-selecting BEFORE
+extrapolating gives the fit a cleaner per-scale signal to work with than
+extrapolating the raw, noise-inflated series would.
+
+Same scope caveat as the standalone pieces above: this is a small, targeted
+probe (4 points), not a systematic grid sweep.
+
 ## Runs to date
 
 | file | grid | rz convention | cells | runtime |
