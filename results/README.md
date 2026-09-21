@@ -169,6 +169,54 @@ register also wasting codespace. It does not change which counter wins at
 any L or p already reported: the L=6 crossover (adder ahead at low p, phase
 ahead from p=0.005 up) is unchanged after post-selection.
 
+## Truncated IQFT (task 3, second piece)
+
+`src/truncated_weight.py`: `weight_unitary_truncated(n, k_used)`, the same
+construction as `weight_unitary` but with a `k_used`-qubit control register
+instead of the full `k = ceil(log2(n+1))`.
+
+**Which reading of "truncated IQFT" this is, and why.** Two standard
+readings exist. The more literal one -- dropping the smallest-angle
+controlled-phase gates from inside `QFTGate`'s own internal decomposition --
+was attempted first and abandoned: matching Qiskit's exact internal
+convention (swap placement, control/target roles, angle signs) by hand
+proved error-prone within the time available (multiple non-matching
+attempts against `Operator` comparison), and shipping a circuit that LOOKS
+like a truncated QFT but silently computes something else is exactly the
+failure mode task 2 already hit once this session -- task 2's fix required
+extensive superposition testing to catch, and there wasn't budget to repeat
+that level of verification here. This module implements the other standard
+reading instead: fewer control qubits, a genuinely smaller internal IQFT.
+
+**Verified, not assumed:** `k_used` equal to the full `k` reproduces
+`weight_unitary` exactly (all n=3,5,7, exhaustive). For `k_used` less than
+the full `k`, the result **aliases exactly `(true weight) mod 2^k_used`**,
+deterministically (checked exhaustively for n=7, k_used=1,2) -- this is a
+clean modular wraparound, not a rounded approximation or a mix of
+candidates. One direct consequence, also verified: for true weights strictly
+below `2^k_used`, truncation gives the exact true weight with **no**
+aliasing, which is what would make a truncated register usable for
+low-threshold screening (the `fn_t0`/`fn_t1` metrics already in this
+project) PROVIDED the true weight is known to stay under `2^k_used` --
+aliasing a genuinely high weight down into the "looks low" range would
+silently create new false negatives, so this is not a safe substitute for
+the full register without that guarantee.
+
+Resource savings from dropping just one qubit (`k_used = k - 1`):
+
+| n | k (full) | full CX | full depth | truncated CX | truncated depth | CX savings |
+|---|---|---|---|---|---|---|
+| 4 | 3 | 33 | 43 | 21 | 31 | 36.4% |
+| 6 | 3 | 45 | 49 | 29 | 36 | 35.6% |
+| 8 | 4 | 82 | 67 | 57 | 55 | 30.5% |
+| 16 | 5 | 186 | 103 | 146 | 91 | 21.5% |
+
+Not yet done: a noise comparison (does the CX/depth saving translate into
+better accuracy under S2, for the specific use case of low-threshold
+screening where aliasing is provably harmless below `2^k_used`?) and the
+CPhase-dropping interpretation, abandoned above for lack of verification
+budget -- flagged as open, not silently dropped.
+
 ## Runs to date
 
 | file | grid | rz convention | cells | runtime |
