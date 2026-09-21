@@ -114,13 +114,36 @@ Depth preview (basis gates cx/rz/sx/x/h/reset/measure, optimization_level=1):
 | 16 | 5 | 32 | 69 | 21 | 103 |
 | 32 | 6 | 64 | 92 | 38 | 163 |
 
-Not yet done: this counter is not wired into `mismatch_circuit` or the noise
-harness -- it exists and is verified standalone, matching the scope of
-"rewrite... verify against Alg.2 on random inputs." Whether it beats
-Algorithm 2 or the adder under actual noise (not just gate-count/depth) is a
-separate, unanswered question, consistent with how every other
-resource-only preview in this project has been kept apart from a real noise
-run.
+**Update: now wired into a mismatch circuit.** `src/mismatch_depth_optimal.py`
+builds `mismatch_circuit_depth_optimal`, the same verified-identical
+load/XOR/OR-flag prefix as `mismatch_circuit`/`mismatch_circuit_adder`,
+counted with `depth_optimal_weight`. The MPS caveat above does NOT apply
+here: mismatch circuits only ever load classical read/window strings via X
+gates, never superpositions, and MPS is exact for basis-state inputs to this
+counter (exhaustively verified). Tests: matches the classical count, and
+agrees with the phase counter on all `2^L` flag patterns for L=1..5.
+
+Resource preview (transpiled depth, no noise yet):
+
+| L | depth-opt qubits | depth-opt depth | adder qubits | adder depth | phase qubits | phase depth |
+|---|---|---|---|---|---|---|
+| 2 | 8 | 26 | 8 | 24 | 8 | 36 |
+| 4 | 16 | 39 | 16 | 61 | 15 | 54 |
+| 6 | 24 | 41 | 22 | 117 | 21 | 60 |
+| 8 | 32 | 55 | 30 | 192 | 28 | 78 |
+
+The depth-optimal counter has the **lowest transpiled depth of all three at
+every L from 4 up**, and the gap grows with L (at L=8: 55 vs phase's 78 vs
+adder's 192) -- consistent with it being the one circuit here specifically
+built to minimize depth. It costs qubits comparable to the adder (both need
+extra ancilla beyond the phase counter's minimal k+n).
+
+Still not done: a noise comparison. This is a depth/qubit preview only,
+using the same caveat as every other preview in this project -- whether
+lower depth translates into better noise robustness (it plausibly does,
+since S2's thermal relaxation accumulates with circuit time) is an empirical
+question the C4 harness could answer directly, not yet run for this third
+counter.
 
 ## Runs to date
 
