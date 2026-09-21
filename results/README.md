@@ -217,6 +217,51 @@ screening where aliasing is provably harmless below `2^k_used`?) and the
 CPhase-dropping interpretation, abandoned above for lack of verification
 budget -- flagged as open, not silently dropped.
 
+## Zero-noise extrapolation (task 3, third piece)
+
+`src/zne.py`: global unitary folding (`U -> U(U^dagger U)^m` for odd scale
+`2m+1`; scale=1 is the circuit unmodified) plus two extrapolation methods
+(`linear_extrapolate`, `exponential_extrapolate`, the latter via
+`scipy.optimize.curve_fit` rather than a hand-derived closed-form formula --
+an earlier attempt at a 3-point closed-form exponential formula was
+abandoned mid-derivation as too easy to get subtly wrong, the same concern
+that shaped the truncated-IQFT scope decision above). Folding is verified to
+exactly preserve the circuit's unitary at every scale tested
+(`Operator(folded).equiv(Operator(original))`, scale = 1,3,5,7) while
+scaling gate count exactly linearly with `scale`.
+
+**Real, substantial recovery -- exponential extrapolation far outperforms
+linear.** Measured at S2, scale = 1, 3, 5, comparing against this project's
+own known ground truth (S1 p=0 gives exactly 1.0, so "how close does the
+scale=0 estimate get to 1.0" is a real check, not a plausibility guess):
+
+| L | p | raw (scale=1) | scale=3 | scale=5 | linear ZNE | exponential ZNE |
+|---|---|---|---|---|---|---|
+| 4 | 0.01 | 0.604 | 0.362 | 0.245 | 0.673 | **0.811** |
+| 6 | 0.01 | 0.509 | 0.257 | 0.178 | 0.563 | **0.796** |
+| 8 | 0.01 | 0.351 | 0.115 | 0.082 | 0.384 | **0.814** |
+| 4 | 0.02 | 0.456 | 0.217 | 0.165 | 0.498 | **0.802** |
+
+Linear extrapolation gives only a small, honest improvement (it systematically
+under-corrects, since the decay visibly isn't linear in scale -- each
+successive drop is larger than the last, e.g. L=8: -0.236 then -0.033, not a
+constant slope). Exponential extrapolation is dramatically closer to the true
+value at every point tested, more than doubling raw accuracy at L=8
+(0.351 -> 0.814). It does not fully reach 1.0, which is expected: ZNE
+approximates the noiseless limit from a small number of scaled measurements,
+it does not reconstruct it exactly, and the true noise process likely isn't a
+single clean exponential either.
+
+**Cost:** folding at scale=5 quintuples circuit depth (and gate count), so
+each ZNE estimate costs `sum(scales)`-times the circuits of a single raw
+measurement (1+3+5=9x here) -- a real resource cost for a real accuracy gain,
+not a free lunch.
+
+Not yet done: a full sweep across the (scenario, L, p, m) grid (this is a
+small, targeted probe on a handful of points, not a systematic run), and a
+side-by-side comparison against post-selection and truncated IQFT's own
+cost/benefit numbers above.
+
 ## Runs to date
 
 | file | grid | rz convention | cells | runtime |
