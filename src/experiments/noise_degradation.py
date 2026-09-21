@@ -116,8 +116,12 @@ def cell_metrics(counts, L, m, trials):
     p_correct = correct / trials
     low, high = wilson_interval(correct, trials)
     mae = sum(count * abs(value - m) for value, count in counts.items()) / trials
-    # Signed error shows DIRECTION: amplitude damping pulls the register toward
-    # |0>, which would under-report the count and make this negative.
+    # Signed error shows DIRECTION. Measured (not merely hypothesized -- see
+    # results/README.md "Amplitude-damping bias, corrected"): this is NOT a
+    # directional pull toward |0> from amplitude damping. It is regression
+    # toward the CENTER of the full 2^k codespace, (2^k-1)/2: low true counts
+    # read HIGH (positive bias) and high true counts read LOW (negative bias),
+    # crossing zero near the codespace center rather than near m=0.
     bias = sum(count * (value - m) for value, count in counts.items()) / trials
     out_of_range = sum(count for value, count in counts.items() if value > L) / trials
 

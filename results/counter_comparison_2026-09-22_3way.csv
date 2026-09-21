@@ -1,0 +1,4 @@
+counter,scenario,L,p,m,pairs_per_m,shots,n_trials,p_correct,wilson_lo,wilson_hi,mae,bias,p_out_of_range,fn_t0,fp_t0,fn_t1,fp_t1,fn_tq,fp_tq,t_quarter,boot_lo,boot_hi,pair_sd,pairs_used,k,num_qubits,depth,cx,seed_pairs,seed_sim,elapsed_s
+adder,S1,2,0.0,0,8,1024,8192,1.0,0.9995312917117791,1.0,0.0,0.0,0.0,0.0,nan,0.0,nan,0.0,nan,0,1.0,1.0,0.0,8,2,8,25,18,20260920,761,0.07091680000303313
+adder,S1,2,0.0,1,8,1024,8192,1.0,0.9995312917117791,1.0,0.0,0.0,0.0,nan,0.0,0.0,nan,nan,0.0,0,1.0,1.0,0.0,8,2,8,25,18,20260920,761,0.09082159999525174
+adder,S1,2,0.0,2,8,1024,8192,1.0,0.9995312917117791,1.0,0.0,0.0,0.0,nan,0.0,nan,0.0,nan,0.0,0,1.0,1.0,0.0,8,2,8,25,18,20260920,761,0.07761580002261326

@@ -262,6 +262,40 @@ small, targeted probe on a handful of points, not a systematic run), and a
 side-by-side comparison against post-selection and truncated IQFT's own
 cost/benefit numbers above.
 
+## Amplitude-damping bias, corrected
+
+The `bias` column was built (see the commit that introduced it) specifically
+to test one hypothesis: that amplitude damping pulls the control register
+toward `|0>`, so low counts would read low and the measured count would be
+systematically UNDER-reported (`bias < 0`) at every true weight `m`. That
+was never actually checked until now. **It is wrong.**
+
+The real pattern, checked against `noise_degradation_2026-09-21_virtualrz.csv`
+and the L=8 file: `bias` is strongly **positive** for small true `m` and
+**negative** for large true `m`, crossing zero not near `m=0` but near the
+**center of the full `2^k` codespace**, `(2^k-1)/2` -- for L=6 (k=3, codespace
+0..7, center 3.5) the crossing sits exactly between m=3 (+0.14) and m=4
+(-0.14); for L=8 (k=4, codespace 0..15, center 7.5) it sits between m=7
+(+0.54) and m=8 (-0.43). This is regression toward a UNIFORM distribution over
+the whole representable range, not a directional pull toward zero. Fit at the
+strongest noise tested (S2, p=0.05): `bias` regressed against
+`(codespace_center - true_m)` gives a slope of 0.58 (L=2) rising to 0.89
+(L=8) -- consistent with the measured distribution moving toward (but not
+reaching) uniform as depolarizing/thermal/readout noise accumulates, with
+slope 1.0 meaning fully random output and zero remaining signal.
+
+This makes sense in hindsight: the dominant noise channels here
+(depolarizing, thermal relaxation applied per-gate, symmetric readout error)
+have no reason to prefer `|0>` over any other computational basis state --
+depolarizing noise is symmetric by construction, and there is nothing in S1
+or S2 that biases toward `|0>` specifically. A pull toward `|0>` would be the
+signature of a *dominant, uncorrected* amplitude-damping channel, which this
+project's noise model does not include as a separate term (see the gate
+treatment in "How build_noise_model treats each gate type" above). The
+"regression toward the codespace center" pattern is the generic signature of
+noise that flattens the outcome distribution, which is what depolarizing
+noise does.
+
 ## Runs to date
 
 | file | grid | rz convention | cells | runtime |
@@ -344,7 +378,7 @@ for `shots` shots; the outcome histograms are pooled, so `n_trials = pairs_per_m
 | `wilson_lo`, `wilson_hi` | Wilson 95% score interval for `p_correct` over `n_trials`. |
 | `mae` | mean absolute error of the measured count, `sum p(v) * abs(v - m)`. |
 | `p_out_of_range` | probability mass on outcomes `> L`. These are impossible by construction, so a non-zero rate means noise. See "Reading `p_out_of_range`" below before drawing conclusions from it. |
-| `bias` | mean **signed** error, `sum p(v) * (v - m)`. Negative means the count is under-reported. `mae` cannot show direction; this can. |
+| `bias` | mean **signed** error, `sum p(v) * (v - m)`. `mae` cannot show direction; this can. Its actual pattern is not what a naive "amplitude damping pulls toward \|0>" guess predicts -- see "Amplitude-damping bias, corrected" below before interpreting it. |
 | `boot_lo`, `boot_hi` | percentile bootstrap 95% CI for P(correct), resampling **pairs** (the independent unit), 10000 resamples. |
 | `pair_sd` | standard deviation of P(correct) across the pairs in the cell. |
 | `pairs_used` | number of pairs the bootstrap resampled. |
