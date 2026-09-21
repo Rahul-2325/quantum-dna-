@@ -135,8 +135,14 @@ def cell_metrics(counts, L, m, trials):
     return row
 
 
-def run_cell(scenario, L, p, m, pairs_per_m, shots, rng, noise_model, verify_coverage=False):
+def run_cell(scenario, L, p, m, pairs_per_m, shots, rng, noise_model, verify_coverage=False,
+             circuit_builder=mismatch_circuit_measured):
     """Run `pairs_per_m` circuits x `shots` shots.
+
+    `circuit_builder(read, window) -> (qc, k)` selects the counter under test;
+    defaults to the phase counter (mismatch_circuit_measured) so existing
+    callers are unaffected. Pass mismatch_circuit_adder_measured to sweep the
+    Paper-1 adder counter instead -- same sampling, metrics and noise model.
 
     Returns the pooled histogram, the per-pair histograms (kept because pairs
     are the independent unit for the bootstrap) and the control width k.
@@ -145,7 +151,7 @@ def run_cell(scenario, L, p, m, pairs_per_m, shots, rng, noise_model, verify_cov
     k = None
     for _ in range(pairs_per_m):
         read, window = sample_stratified_pair(L, m, rng)
-        qc, k = mismatch_circuit_measured(read, window)
+        qc, k = circuit_builder(read, window)
         transpiled = transpile_for_noise(qc)
         if verify_coverage:
             assert_full_coverage(noise_model, transpiled,
@@ -166,11 +172,11 @@ def run_cell(scenario, L, p, m, pairs_per_m, shots, rng, noise_model, verify_cov
     return counts, per_pair_counts, k
 
 
-def circuit_stats(L, seed=SEED_PAIRS):
+def circuit_stats(L, seed=SEED_PAIRS, circuit_builder=mismatch_circuit_measured):
     """Qubit count, transpiled depth and CX count for a representative circuit."""
     rng = random.Random(seed)
     read, window = sample_stratified_pair(L, L // 2, rng)
-    qc, k = mismatch_circuit_measured(read, window)
+    qc, k = circuit_builder(read, window)
     transpiled = transpile_for_noise(qc)
     return {"k": k, "num_qubits": qc.num_qubits, "depth": transpiled.depth(),
             "cx": transpiled.count_ops().get("cx", 0)}
@@ -272,8 +278,24 @@ def git_commit_hash():
         return None
 
 
+CSV_FIELDNAMES = (
+    ["scenario", "L", "p", "m", "pairs_per_m", "shots", "n_trials",
+     "p_correct", "wilson_lo", "wilson_hi", "mae", "bias", "p_out_of_range",
+     "fn_t0", "fp_t0", "fn_t1", "fp_t1", "fn_tq", "fp_tq", "t_quarter",
+     "boot_lo", "boot_hi", "pair_sd", "pairs_used",
+     "k", "num_qubits", "depth", "cx", "seed_pairs", "seed_sim", "elapsed_s"])
+
+
 def run_sweep(levels, pairs_per_m, shots, results_dir, tag=None, force=False):
-    """Full grid over scenarios x p x L x m; writes CSV and metadata JSON."""
+    """Full grid over scenarios x p x L x m; writes CSV incrementally, metadata at the end.
+
+    Aer's C++ backend can raise a hard MemoryError partway through a long grid
+    (hit twice on the L=8 run at ~28 qubits/S2). Writing and flushing each row
+    as it is produced, rather than batching everything into memory and writing
+    once at the end, means a crash loses at most the in-flight cell instead of
+    every row computed so far. `meta.json` is written only on a full, successful
+    completion, so its absence next to a CSV is the signal that a run is partial.
+    """
     import csv
 
     import qiskit
@@ -295,50 +317,53 @@ def run_sweep(levels, pairs_per_m, shots, results_dir, tag=None, force=False):
 
     started = time.perf_counter()
     stats = {L: circuit_stats(L) for L in levels}
-    rows = []
+    results_dir.mkdir(parents=True, exist_ok=True)
 
-    for scenario in ("S1", "S2"):
-        for L in levels:
-            num_qubits = stats[L]["num_qubits"]
-            for p in P_GRID:
-                noise_model = scenario_noise_model(scenario, p, num_qubits)
-                # S1 at p=0 is the noiseless control: depolarizing_error(0) is the
-                # identity channel, which Aer drops, so the model is empty by design
-                # and there is no coverage to check.
-                noiseless_control = is_noiseless_control(scenario, p)
-                if noiseless_control and noise_model.to_dict()["errors"]:
-                    raise RuntimeError(
-                        f"{scenario} p={p} was expected to be noiseless but carries errors")
-                for m in range(L + 1):
-                    rng = random.Random(SEED_PAIRS + 7919 * L + 104729 * m)
-                    cell_started = time.perf_counter()
-                    counts, per_pair, k = run_cell(
-                        scenario, L, p, m, pairs_per_m, shots, rng, noise_model,
-                        verify_coverage=(m == 0 and not noiseless_control))
-                    trials = pairs_per_m * shots
-                    metrics = cell_metrics(counts, L, m, trials)
-                    metrics.update(pair_statistics(per_pair, m, shots))
-                    if scenario == "S1" and p == 0.0 and metrics["p_correct"] != 1.0:
+    row_count = 0
+    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=CSV_FIELDNAMES)
+        writer.writeheader()
+        handle.flush()
+
+        for scenario in ("S1", "S2"):
+            for L in levels:
+                num_qubits = stats[L]["num_qubits"]
+                for p in P_GRID:
+                    noise_model = scenario_noise_model(scenario, p, num_qubits)
+                    # S1 at p=0 is the noiseless control: depolarizing_error(0) is
+                    # the identity channel, which Aer drops, so the model is empty
+                    # by design and there is no coverage to check.
+                    noiseless_control = is_noiseless_control(scenario, p)
+                    if noiseless_control and noise_model.to_dict()["errors"]:
                         raise RuntimeError(
-                            f"noiseless S1 cell L={L} m={m} gave "
-                            f"P(correct)={metrics['p_correct']!r}, expected exactly 1.0")
-                    rows.append({"scenario": scenario, "L": L, "p": p, "m": m,
-                                 "pairs_per_m": pairs_per_m, "shots": shots,
-                                 "n_trials": trials, **metrics, **stats[L],
-                                 "seed_pairs": SEED_PAIRS, "seed_sim": SEED_SIM,
-                                 "elapsed_s": time.perf_counter() - cell_started})
-                    print(f"  {scenario} L={L} p={p:<6} m={m}  "
-                          f"P(correct)={metrics['p_correct']:.4f}  "
-                          f"MAE={metrics['mae']:.3f}  "
-                          f"({time.perf_counter() - cell_started:.1f}s)", flush=True)
+                            f"{scenario} p={p} was expected to be noiseless but carries errors")
+                    for m in range(L + 1):
+                        rng = random.Random(SEED_PAIRS + 7919 * L + 104729 * m)
+                        cell_started = time.perf_counter()
+                        counts, per_pair, k = run_cell(
+                            scenario, L, p, m, pairs_per_m, shots, rng, noise_model,
+                            verify_coverage=(m == 0 and not noiseless_control))
+                        trials = pairs_per_m * shots
+                        metrics = cell_metrics(counts, L, m, trials)
+                        metrics.update(pair_statistics(per_pair, m, shots))
+                        if scenario == "S1" and p == 0.0 and metrics["p_correct"] != 1.0:
+                            raise RuntimeError(
+                                f"noiseless S1 cell L={L} m={m} gave "
+                                f"P(correct)={metrics['p_correct']!r}, expected exactly 1.0")
+                        row = {"scenario": scenario, "L": L, "p": p, "m": m,
+                               "pairs_per_m": pairs_per_m, "shots": shots,
+                               "n_trials": trials, **metrics, **stats[L],
+                               "seed_pairs": SEED_PAIRS, "seed_sim": SEED_SIM,
+                               "elapsed_s": time.perf_counter() - cell_started}
+                        writer.writerow(row)
+                        handle.flush()
+                        row_count += 1
+                        print(f"  {scenario} L={L} p={p:<6} m={m}  "
+                              f"P(correct)={metrics['p_correct']:.4f}  "
+                              f"MAE={metrics['mae']:.3f}  "
+                              f"({time.perf_counter() - cell_started:.1f}s)", flush=True)
 
     total_seconds = time.perf_counter() - started
-    results_dir.mkdir(parents=True, exist_ok=True)
-    with csv_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
-        writer.writeheader()
-        writer.writerows(rows)
-
     meta = {"date": stamp, "git_commit": git_commit_hash(),
             "qiskit": qiskit.__version__, "qiskit_aer": qiskit_aer.__version__,
             "seed_pairs": SEED_PAIRS, "seed_sim": SEED_SIM, "shots": shots,
@@ -351,9 +376,9 @@ def run_sweep(levels, pairs_per_m, shots, results_dir, tag=None, force=False):
             "bootstrap": {"resamples": BOOTSTRAP_RESAMPLES, "seed": SEED_BOOTSTRAP,
                           "unit": "pair"},
             "circuit_stats": {str(L): stats[L] for L in levels},
-            "total_runtime_s": total_seconds, "rows": len(rows)}
+            "total_runtime_s": total_seconds, "rows": row_count}
     meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
-    print(f"\nwrote {csv_path} ({len(rows)} rows) and {meta_path} "
+    print(f"\nwrote {csv_path} ({row_count} rows) and {meta_path} "
           f"in {total_seconds / 60:.1f} min")
     return csv_path, meta_path
 

@@ -7,8 +7,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+from qiskit import transpile
+
 from aer_helpers import mismatch_circuit_measured, transpile_for_noise
 from hwlib import ENC, hwb_circuit, mismatch_circuit, weight_unitary
+from plus_one_counter import plus_one_counter, register_width
 
 FIGURES = Path(__file__).resolve().parents[1] / "figures"
 
@@ -128,11 +132,107 @@ data, and the inverse computation cleanly disentangles it.
     save(qc, "3_hwb_circuit", "Paper 1 case study")
 
 
+def plus_one_figure(n=7):
+    """Paper 1 (IEEE TC 2022), Section 2 / Fig. 1: the CNOT/Toffoli 'plus-one' counter.
+
+    n=7 is the paper's own worked example, drawn here the same size so the
+    qubit count and gate pattern can be checked directly against their Fig. 1.
+    """
+    qc, k, t_width = plus_one_counter(n)
+    print(f"""
+================================================================================
+4. plus_one_counter(n={n})  ->  Paper 1, Section 2 and Fig. 1 (baseline)
+================================================================================
+Computes |x>|0> -> |x>|W(x)> the OTHER way: instead of phase kickback + QFT
+(Paper 2), this runs a controlled ripple-carry INCREMENT once per input bit,
+exactly Paper 1's Fig. 1 (drawn there for n=7, hence the default here).
+
+Qubits 0..{k - 1}        = weight register w (little-endian, same meaning as weight_unitary's C)
+Qubits {k}..{k + n - 1}        = data x1..x{n} (the bits being counted)
+Qubits {k + n}..{qc.num_qubits - 1}        = temp/carry scratch t (returns to |0> — see below)
+
+Paper 1's own layout for n=7 (Fig. 1 caption) is
+  |x1 x2 x3 x4 x5 x6 x7 w1 t1 w2 w3>
+i.e. weight and temp qubits interleaved differently from ours, but the GATE
+SEQUENCE is what we verify against, not the wire ordering, since ordering is
+just a drawing choice.
+
+For each input bit x_i (i=1..{n}), "increment w by 1 if x_i=1":
+  i=1            : a single CNOT(x1, w1) -- the 1-bit case needs no carry.
+  i=2,3          : Toffoli(xi,w1,w2) then CNOT(xi,w1) -- a plain 2-bit half adder.
+  i>3            : ripple the carry forward through t (a Toffoli chain), apply
+                   a half-adder at the current top bit (this is what may GROW
+                   the register into a new bit), then ripple back, UNCOMPUTING
+                   each carry the instant it has been used to set a sum bit.
+                   That is why t is back at |0> after every single increment --
+                   not just at the end of all {n} of them -- so the same scratch
+                   qubits are reused for every i without ever needing a separate
+                   'restore ancilla' pass. Verified exhaustively for n=1..8 in
+                   tests/test_plus_one_counter.py (matches the classical weight
+                   on every input, and t stays |0>).
+
+Register width grows only as needed: at step i it is floor(log2(i))+1, so the
+full k-wide register is only reached at the LAST increment (i={n}) -- earlier
+steps in the drawing below touch fewer wires, which is visible as gates that
+start appearing only partway across.
+""")
+    print(qc.draw("text", fold=110))
+    save(qc, "4_plus_one_counter", "Paper 1 Sec. 2 baseline")
+
+
+def counter_comparison_figure(levels=(2, 4, 6, 8)):
+    """Side by side: Paper 1's adder counter vs Paper 2's phase counter, same n."""
+    print(f"""
+================================================================================
+5. Resource comparison: plus_one_counter (Paper 1) vs weight_unitary (Paper 2)
+================================================================================
+Same transpile target (cx/rz/sx/x, all-to-all), optimization_level=1.
+This is a quick preview -- the full comparison (same noise models, same
+strata, same seeds, matching mismatch_circuit_adder against mismatch_circuit)
+is part C4 of the baseline work, not yet run.
+""")
+    header = (f"{'n':>3} {'k':>3} | {'adder q':>7} {'adder cx':>8} {'adder depth':>11} | "
+              f"{'phase q':>7} {'phase cx':>8} {'phase depth':>11}")
+    print(header)
+    print("-" * len(header))
+    rows = []
+    for n in levels:
+        adder, k, t_width = plus_one_counter(n)
+        adder_t = transpile(adder, basis_gates=["cx", "rz", "sx", "x"],
+                            coupling_map=None, optimization_level=1, seed_transpiler=1234)
+        phase, _ = weight_unitary(n)
+        phase_t = transpile(phase, basis_gates=["cx", "rz", "sx", "x"],
+                            coupling_map=None, optimization_level=1, seed_transpiler=1234)
+        row = (n, k, adder.num_qubits, adder_t.count_ops().get("cx", 0), adder_t.depth(),
+               phase.num_qubits, phase_t.count_ops().get("cx", 0), phase_t.depth())
+        rows.append(row)
+        print(f"{row[0]:>3} {row[1]:>3} | {row[2]:>7} {row[3]:>8} {row[4]:>11} | "
+              f"{row[5]:>7} {row[6]:>8} {row[7]:>11}")
+
+    fig, axes = plt.subplots(1, 2, figsize=(9, 3.5))
+    ns = [r[0] for r in rows]
+    axes[0].plot(ns, [r[3] for r in rows], "o-", label="adder (Paper 1)")
+    axes[0].plot(ns, [r[6] for r in rows], "s-", label="phase (Paper 2)")
+    axes[0].set_xlabel("n"); axes[0].set_ylabel("CX count"); axes[0].legend()
+    axes[0].set_title("CX count")
+    axes[1].plot(ns, [r[4] for r in rows], "o-", label="adder (Paper 1)")
+    axes[1].plot(ns, [r[7] for r in rows], "s-", label="phase (Paper 2)")
+    axes[1].set_xlabel("n"); axes[1].set_ylabel("transpiled depth"); axes[1].legend()
+    axes[1].set_title("Depth")
+    fig.tight_layout()
+    FIGURES.mkdir(exist_ok=True)
+    path = FIGURES / "5_counter_comparison.png"
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    print(f"  wrote {path.relative_to(FIGURES.parent)}  (preview only, not the full C4 run)")
+
+
 def main():
     print("Drawing the implemented circuits and mapping them to the papers.")
     weight_figure()
     mismatch_figure()
     hwb_figure()
+    plus_one_figure()
+    counter_comparison_figure()
     print(f"""
 ================================================================================
 Summary of which paper each piece comes from

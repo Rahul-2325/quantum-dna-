@@ -5,13 +5,56 @@ library versions, seeds and runtime. Never edit these by hand.
 
 ## Runs to date
 
-| file | grid | cells | runtime |
-|---|---|---|---|
-| `noise_degradation_2026-09-20.csv` | L = 2, 4, 6 | 240 | 19.0 min |
-| `noise_degradation_2026-09-20_L8.csv` | L = 8 | 144 | 38.6 min |
+| file | grid | rz convention | cells | runtime |
+|---|---|---|---|---|
+| `noise_degradation_2026-09-20.csv` | L = 2, 4, 6 | legacy (rz noisy) | 240 | 19.0 min |
+| `noise_degradation_2026-09-20_L8.csv` | L = 8 | legacy (rz noisy) | 144 | 38.6 min |
+| `noise_degradation_2026-09-21_virtualrz.csv` | L = 2, 4, 6 | virtual_rz (default) | 240 | 16.8 min |
+| `noise_degradation_2026-09-22_virtualrz_L8.csv` | L = 8 | virtual_rz (default) | 144 | 54.6 min |
 
-Both use the same scenarios, `p` grid, seeds, 8 pairs per m and 1024 shots, so
-they concatenate directly. `--tag` keeps same-day runs from overwriting each other.
+All four use the same scenarios, `p` grid, seeds, 8 pairs per m and 1024 shots, so
+each pair (legacy / virtualrz) concatenates directly. `--tag` keeps same-day and
+same-convention runs from overwriting each other. **The virtualrz files are the
+current numbers** -- see "rz handling changed between runs" in Limitations below
+before comparing across the two conventions.
+
+The L=8 virtualrz run needed two retries: the first attempt (started 2026-09-21)
+was interrupted by a session restart; the second crashed with a genuine
+`MemoryError: bad allocation` inside Aer's C++ backend at 134/144 cells,
+concurrent with other memory-heavy work in the same session. Both failures are
+why `run_sweep` now writes and flushes each CSV row immediately rather than
+batching the whole run in memory -- see the docstring in
+`src/experiments/noise_degradation.py`. `meta.json` is written only on full
+success, so a CSV without a matching `meta.json` next to it is an incomplete run
+and should not be used.
+
+### Old-vs-new: effect of virtual_rz on P(correct), mean over m, S2 scenario
+
+| L | p | legacy (rz noisy) | virtual_rz | delta |
+|---|---|---|---|---|
+| 2 | 0.0 | 0.904 | 0.915 | +0.011 |
+| 2 | 0.001 | 0.890 | 0.904 | +0.014 |
+| 2 | 0.01 | 0.787 | 0.812 | +0.025 |
+| 4 | 0.0 | 0.805 | 0.816 | +0.011 |
+| 4 | 0.001 | 0.779 | 0.793 | +0.014 |
+| 4 | 0.01 | 0.577 | 0.606 | +0.029 |
+| 6 | 0.0 | 0.750 | 0.770 | +0.019 |
+| 6 | 0.001 | 0.718 | 0.737 | +0.019 |
+| 6 | 0.01 | 0.496 | 0.521 | +0.025 |
+| 8 | 0.0 | 0.619 | 0.647 | +0.027 |
+| 8 | 0.001 | 0.578 | 0.601 | +0.023 |
+| 8 | 0.01 | 0.319 | 0.347 | +0.029 |
+
+The shift at `p=0` is small (+0.011 to +0.027, growing with L because rz's
+*absolute* count grows even though its *share* of gates stays ~49% at every L) --
+this isolates rz's thermal-relaxation contribution, since S1 depolarizing is off
+at p=0. The larger shift at `p=0.01` (+0.023 to +0.029) is rz's depolarizing
+contribution, which only exists once gate error is present. Both are consistent
+with the direct sensitivity check in Limitations below (rz fully noiseless at
+S2 p=0 recovers +0.011/+0.011/+0.020 for L=2/4/6): that check used a slightly
+different construction (only S2's thermal term toggled, not the full
+`virtual_rz` flag) but lands on the same numbers, which is the cross-check that
+matters.
 
 ## `noise_degradation_<date>.csv`
 
