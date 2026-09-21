@@ -145,6 +145,30 @@ since S2's thermal relaxation accumulates with circuit time) is an empirical
 question the C4 harness could answer directly, not yet run for this third
 counter.
 
+## Post-selection (task 3, first piece)
+
+`src/experiments/post_selection.py` computes `P(correct | in-range) =
+p_correct / (1 - p_out_of_range)` directly from the existing
+`noise_degradation_*.csv` and `counter_comparison_*.csv` columns -- no new
+circuit runs, since every correct outcome is already in-range by
+construction (`P(correct AND in-range) = P(correct)`). This is the
+post-selection analysis "Reading p_out_of_range" above said had not been
+measured yet.
+
+Real, modest gains, tracking the codespace-ceiling pattern from that
+section (larger wasted codespace -> more error-detection signal -> bigger
+gain): at L=8, p=0.01, post-selection recovers 0.347 -> 0.446 (+0.099) at
+the cost of discarding 22.1% of shots. At L=6 (smallest wasted codespace,
+12.5%) the gain is much smaller: 0.521 -> 0.548 (+0.027) at only 4.9%
+discard. Full table, all L and p, in the script's own output.
+
+Applied to the C4 adder-vs-phase data: post-selection helps BOTH counters,
+but helps the phase counter more in absolute terms (L=4, p=0.01: adder
++0.033, phase +0.085) -- consistent with the phase counter's k-qubit
+register also wasting codespace. It does not change which counter wins at
+any L or p already reported: the L=6 crossover (adder ahead at low p, phase
+ahead from p=0.005 up) is unchanged after post-selection.
+
 ## Runs to date
 
 | file | grid | rz convention | cells | runtime |
