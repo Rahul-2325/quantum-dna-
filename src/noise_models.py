@@ -86,12 +86,22 @@ def covered_operations(noise_model):
 
 
 def assert_full_coverage(noise_model, circuit, check_measure=False, exempt=(),
-                         skip=("barrier", "delay", "reset")):
+                         skip=("barrier", "delay", "reset", "if_else", "store")):
     """Raise unless every gate instance in `circuit` has a matching error in `noise_model`.
 
     `exempt` names gates that are deliberately noiseless and so must not be
     reported as missing -- pass VIRTUAL_GATES when the model was built with
     `virtual_rz=True`, otherwise every rz in the circuit looks uncovered.
+
+    `if_else` and `store` (from depth_optimal_counter.py's classically
+    conditioned rotations) are classical control-flow constructs, not
+    physical gates, so they are skipped by default like barrier/reset. NOTE:
+    this only checks gates visible in circuit.data's flat iteration -- gates
+    INSIDE an if_else block's body (e.g. the conditioned Rz corrections) are
+    not iterated here at all, so this function does not verify their
+    coverage one way or the other. Whether Aer's noise model actually applies
+    to gates inside a conditional block at simulation time is a separate,
+    unverified question; see results/README.md.
     """
     covered = covered_operations(noise_model)
     missing = set()

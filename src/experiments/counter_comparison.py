@@ -1,9 +1,24 @@
-"""C4: side-by-side noise comparison of the adder (Paper 1) vs phase (Paper 2)
-mismatch counters. Same transpile target, same noise models (virtual_rz),
-same stratified sampling, same seeds and shots as noise_degradation.py --
-this script reuses that module's run_cell/circuit_stats/cell_metrics/
-pair_statistics machinery with only the circuit builder swapped, so any
-difference in the results is attributable to the counter, not the harness.
+"""C4: side-by-side noise comparison of the adder (Paper 1), phase (Paper 2),
+and depth-optimal (task 2 rewrite) mismatch counters. Same transpile target,
+same noise models (virtual_rz), same stratified sampling, same seeds and
+shots as noise_degradation.py -- this script reuses that module's
+run_cell/circuit_stats/cell_metrics/pair_statistics machinery with only the
+circuit builder swapped, so any difference in the results is attributable to
+the counter, not the harness.
+
+Adding the depth-optimal counter required two small fixes to shared
+infrastructure, both backward compatible: aer_helpers.control_distributions_aer
+grew a `num_bits` parameter (depth_optimal_weight uses two classical
+registers -- "out" and a scratch "temp" -- so Aer's count keys come back
+space-separated, which plain int(bits,2) cannot parse; the other two counters
+use a single register and are unaffected by leaving num_bits unset), and
+noise_models.assert_full_coverage now skips "if_else"/"store" (classical
+control-flow constructs from the classically-conditioned rotations, not
+physical gates) the same way it already skipped barrier/delay/reset. See
+those modules' docstrings for the important caveat this surfaced: gates
+INSIDE an if_else block are not visible to assert_full_coverage's flat
+iteration, so whether Aer's noise model actually reaches them at simulation
+time is a separate, unverified question.
 """
 from __future__ import annotations
 
@@ -19,12 +34,14 @@ import matplotlib.pyplot as plt
 
 from aer_helpers import mismatch_circuit_measured
 from mismatch_adder import mismatch_circuit_adder_measured
+from mismatch_depth_optimal import mismatch_circuit_depth_optimal
 from noise_degradation import (CSV_FIELDNAMES, P_GRID, READOUT_ERROR, SEED_PAIRS, SEED_SIM,
                                THERMAL, VIRTUAL_RZ, cell_metrics, circuit_stats,
                                git_commit_hash, is_noiseless_control, pair_statistics,
                                run_cell, scenario_noise_model)
 
-COUNTERS = {"adder": mismatch_circuit_adder_measured, "phase": mismatch_circuit_measured}
+COUNTERS = {"adder": mismatch_circuit_adder_measured, "phase": mismatch_circuit_measured,
+           "depth_optimal": mismatch_circuit_depth_optimal}
 COMPARISON_FIELDNAMES = ["counter"] + CSV_FIELDNAMES
 
 
@@ -109,14 +126,18 @@ def run_comparison(levels, pairs_per_m, shots, results_dir, tag=None, force=Fals
     return csv_path, meta_path
 
 
+MARKERS = {"adder": "o-", "phase": "s-", "depth_optimal": "^-"}
+
+
 def make_figure(csv_path, out_path, levels):
-    """P(correct) vs p, per L, both counters overlaid (S2, mean over m)."""
+    """P(correct) vs p, per L, all counters present in the CSV overlaid (S2, mean over m)."""
     rows = list(csv.DictReader(open(csv_path, encoding="utf-8")))
+    present = [c for c in MARKERS if any(r["counter"] == c for r in rows)]
     fig, axes = plt.subplots(1, len(levels), figsize=(3.2 * len(levels), 3.2), sharey=True)
     if len(levels) == 1:
         axes = [axes]
     for ax, L in zip(axes, levels):
-        for counter, marker in (("adder", "o-"), ("phase", "s-")):
+        for counter in present:
             xs, ys = [], []
             for p in P_GRID:
                 sel = [float(r["p_correct"]) for r in rows
@@ -124,11 +145,11 @@ def make_figure(csv_path, out_path, levels):
                       and int(r["L"]) == L and float(r["p"]) == p]
                 if sel:
                     xs.append(p); ys.append(sum(sel) / len(sel))
-            ax.plot(xs, ys, marker, label=counter)
+            ax.plot(xs, ys, MARKERS[counter], label=counter)
         ax.set_title(f"L={L}"); ax.set_xlabel("2-qubit error rate p")
         ax.set_ylim(0, 1.02)
     axes[0].set_ylabel("P(correct), mean over m"); axes[0].legend()
-    fig.suptitle("Adder (Paper 1) vs phase (Paper 2) mismatch counter, S2 noise")
+    fig.suptitle("Adder vs phase vs depth-optimal mismatch counter, S2 noise")
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     print(f"wrote {out_path}")

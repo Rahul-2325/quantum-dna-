@@ -160,7 +160,8 @@ def run_cell(scenario, L, p, m, pairs_per_m, shots, rng, noise_model, verify_cov
         circuits.append(transpiled)
 
     distributions = control_distributions_aer(
-        circuits, shots, noise_model=noise_model, seed=SEED_SIM + 7919 * L + 1000 * m)
+        circuits, shots, noise_model=noise_model, seed=SEED_SIM + 7919 * L + 1000 * m,
+        num_bits=k)
 
     per_pair_counts = [{value: round(probability * shots)
                         for value, probability in distribution.items()}

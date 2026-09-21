@@ -19,33 +19,52 @@ def control_distribution_statevector(qc, k):
 
 
 def control_distributions_aer(circuits, shots, noise_model=None, seed=None,
-                              method="matrix_product_state"):
+                              method="matrix_product_state", num_bits=None):
     """Distributions for several circuits submitted as a single Aer job.
 
     Building the simulator (and attaching a per-qubit noise model) costs roughly
     0.2s, so batching a cell's circuits into one job rather than one job each is
     a large saving; Aer also parallelises across the circuits in a job.
+
+    `num_bits`: circuits with a SINGLE classical register (mismatch_circuit,
+    mismatch_circuit_adder) return a plain binary string, parsed as-is. A
+    circuit with more than one classical register (mismatch_circuit_depth_optimal,
+    whose "out" and scratch "temp" registers are separate) returns a
+    space-separated key instead, e.g. "10 1010", which plain int(bits, 2)
+    cannot parse. Pass `num_bits` (the width of the register that actually
+    holds the answer) to take just the trailing `num_bits` characters after
+    stripping the space, discarding everything else -- this works whether or
+    not the key has a space, so existing single-register callers are
+    unaffected by leaving it unset.
     """
     simulator = AerSimulator(noise_model=noise_model, method=method)
     result = simulator.run(list(circuits), shots=shots, seed_simulator=seed).result()
-    return [{int(bits, 2): count / shots
-             for bits, count in result.get_counts(index).items()}
-            for index in range(len(circuits))]
+    distributions = []
+    for index in range(len(circuits)):
+        distribution = {}
+        for bits, count in result.get_counts(index).items():
+            key = bits.replace(" ", "")
+            value = int(key[-num_bits:] if num_bits else key, 2)
+            distribution[value] = distribution.get(value, 0) + count / shots
+        distributions.append(distribution)
+    return distributions
 
 
 def control_distribution_aer(qc, shots, noise_model=None, seed=None,
-                             method="matrix_product_state"):
+                             method="matrix_product_state", num_bits=None):
     """Full {value: probability} distribution over `qc`'s measured register, from Aer shots.
 
     `qc` must already measure the control qubits, and must already be
-    transpiled to BASIS_GATES whenever a noise model is supplied.
+    transpiled to BASIS_GATES whenever a noise model is supplied. See
+    control_distributions_aer for `num_bits` (needed for circuits with more
+    than one classical register).
 
     The default MPS method is exact for these low-entanglement circuits (the
     read register stays in a product basis state) and is ~23x faster than dense
     statevector at L=6; test_mps_matches_statevector pins that equivalence.
     """
     return control_distributions_aer([qc], shots, noise_model=noise_model,
-                                     seed=seed, method=method)[0]
+                                     seed=seed, method=method, num_bits=num_bits)[0]
 
 
 def mismatch_circuit_measured(read, ref_window):
