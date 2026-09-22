@@ -145,6 +145,55 @@ since S2's thermal relaxation accumulates with circuit time) is an empirical
 question the C4 harness could answer directly, not yet run for this third
 counter.
 
+## Connectivity-aware resimulation: a real reversal, not just an extension
+
+`results/counter_comparison_2026-09-22_hex.csv`, 720 rows: the exact same
+3-way comparison as immediately below, with ONLY the transpile target
+changed -- `src/connectivity.py`'s heavy-hex coupling map
+(`CouplingMap.from_heavy_hex(5)`, 57 qubits, generated natively by Qiskit,
+no IBM account or hardware access needed) instead of all-to-all. Same
+scenarios/p-grid/seeds/pairs/shots. All 45 S1 p=0 control cells exactly
+1.0. `figures/7_counter_comparison_noise_hex.png`.
+
+**Building this exposed a serious bug before any real numbers came out of
+it.** Handing the full 57-qubit map straight to `transpile(coupling_map=...)`
+makes the transpiled circuit as wide as the WHOLE map, not just the qubits
+the logical circuit needs -- an 8-qubit circuit silently became a 57-qubit
+one. This blew up MPS (over 1GB RAM and still climbing, had to be
+force-killed) and would have made dense statevector uncomputable (2^57).
+Fixed in `connectivity.py` by extracting a connected N-qubit subgraph via
+BFS + `CouplingMap.reduce()` instead of handing over the full map -- pinned
+by a regression test so this can't silently recur.
+
+**Result: this reverses the previous conclusion, not just extends it.**
+Under all-to-all routing, depth-optimal never won a single cell (see the
+section immediately below). Under realistic heavy-hex routing, it wins
+several: L=4 at p=0.01/0.02/0.05, and L=6 at p=0.02/0.05. Everyone gets
+worse under real routing, as expected, but depth-optimal degrades LEAST:
+at L=6, p=0.01, adder drops -0.243 and phase drops -0.224 from their
+all-to-all values, while depth-optimal drops only -0.181. Its already-lower
+depth (see the earlier resource-only preview) leaves less room for routing
+to add further depth on top -- the property that looked irrelevant under
+the idealized comparison turns out to be the deciding factor once realistic
+connectivity is accounted for.
+
+Full picture per L (S2, mean over m):
+
+| L | p | adder | phase | depth-optimal | winner |
+|---|---|---|---|---|---|
+| 2 | 0.01 | 0.816 | 0.727 | 0.795 | adder |
+| 2 | 0.05 | 0.535 | 0.413 | 0.524 | adder |
+| 4 | 0.01 | 0.459 | 0.416 | **0.485** | depth-optimal |
+| 4 | 0.05 | 0.173 | 0.150 | **0.181** | depth-optimal |
+| 6 | 0.01 | 0.256 | **0.297** | 0.292 | phase (barely) |
+| 6 | 0.05 | 0.130 | 0.131 | **0.134** | depth-optimal |
+
+Not yet done: L=8 for this comparison, and whether a different heavy-hex
+distance/layout choice or a different SABRE seed changes these specific
+crossover points (the qualitative reversal is unlikely to be a seed
+artifact given the consistent pattern across 4 separate (L,p) cells, but
+the exact numbers have not been checked for seed sensitivity).
+
 ## 3-way noise comparison: depth-optimal added (item 1 of the follow-up list)
 
 `results/counter_comparison_2026-09-22_3way.csv`, 720 rows: the C4 harness
