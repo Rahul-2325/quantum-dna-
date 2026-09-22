@@ -32,7 +32,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
-from aer_helpers import mismatch_circuit_measured
+from aer_helpers import mismatch_circuit_measured, transpile_for_noise
 from mismatch_adder import mismatch_circuit_adder_measured
 from mismatch_depth_optimal import mismatch_circuit_depth_optimal
 from noise_degradation import (CSV_FIELDNAMES, P_GRID, READOUT_ERROR, SEED_PAIRS, SEED_SIM,
@@ -45,11 +45,18 @@ COUNTERS = {"adder": mismatch_circuit_adder_measured, "phase": mismatch_circuit_
 COMPARISON_FIELDNAMES = ["counter"] + CSV_FIELDNAMES
 
 
-def run_comparison(levels, pairs_per_m, shots, results_dir, tag=None, force=False):
+def run_comparison(levels, pairs_per_m, shots, results_dir, tag=None, force=False,
+                   transpile_fn=transpile_for_noise):
     """Same incremental-write-per-row design as run_sweep, and for the same reason:
     a long Aer run at L=8 has twice raised a hard MemoryError partway through, so
     batching all rows into memory and writing once at the end risks losing a full
-    run's worth of completed cells to one crash near the finish line."""
+    run's worth of completed cells to one crash near the finish line.
+
+    `transpile_fn` selects the transpile target; defaults to the existing
+    all-to-all transpile_for_noise. Pass
+    connectivity.transpile_connectivity_aware for a realistic heavy-hex
+    coupling map instead.
+    """
     import qiskit
     import qiskit_aer
 
@@ -64,7 +71,7 @@ def run_comparison(levels, pairs_per_m, shots, results_dir, tag=None, force=Fals
                 raise FileExistsError(f"{path} already exists; pass --tag or --force")
 
     started = time.perf_counter()
-    stats = {(counter, L): circuit_stats(L, circuit_builder=builder)
+    stats = {(counter, L): circuit_stats(L, circuit_builder=builder, transpile_fn=transpile_fn)
              for counter, builder in COUNTERS.items() for L in levels}
     results_dir.mkdir(parents=True, exist_ok=True)
 
@@ -87,7 +94,7 @@ def run_comparison(levels, pairs_per_m, shots, results_dir, tag=None, force=Fals
                             counts, per_pair, k = run_cell(
                                 scenario, L, p, m, pairs_per_m, shots, rng, noise_model,
                                 verify_coverage=(m == 0 and not noiseless_control),
-                                circuit_builder=builder)
+                                circuit_builder=builder, transpile_fn=transpile_fn)
                             trials = pairs_per_m * shots
                             metrics = cell_metrics(counts, L, m, trials)
                             metrics.update(pair_statistics(per_pair, m, shots))
@@ -119,6 +126,7 @@ def run_comparison(levels, pairs_per_m, shots, results_dir, tag=None, force=Fals
             "counters": list(COUNTERS), "virtual_rz": VIRTUAL_RZ,
             "thermal": THERMAL, "readout_error": READOUT_ERROR,
             "circuit_stats": {f"{c}_{L}": stats[(c, L)] for c, L in stats},
+            "transpile": transpile_fn.__name__,
             "total_runtime_s": total_seconds, "rows": row_count}
     meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
     print(f"\nwrote {csv_path} ({row_count} rows) and {meta_path} "
@@ -166,10 +174,19 @@ def main():
         Path(__file__).resolve().parents[2] / "figures"))
     parser.add_argument("--tag", default=None)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--connectivity-aware", action="store_true",
+                        help="route onto a heavy-hex coupling map instead of all-to-all")
     args = parser.parse_args()
 
+    if args.connectivity_aware:
+        from connectivity import transpile_connectivity_aware
+        transpile_fn = transpile_connectivity_aware
+    else:
+        transpile_fn = transpile_for_noise
+
     csv_path, _ = run_comparison(args.levels, args.pairs_per_m, args.shots,
-                                 args.results_dir, tag=args.tag, force=args.force)
+                                 args.results_dir, tag=args.tag, force=args.force,
+                                 transpile_fn=transpile_fn)
     figures_dir = Path(args.figures_dir)
     figures_dir.mkdir(exist_ok=True)
     suffix = f"_{args.tag}" if args.tag else ""

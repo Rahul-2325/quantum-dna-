@@ -140,13 +140,19 @@ def cell_metrics(counts, L, m, trials):
 
 
 def run_cell(scenario, L, p, m, pairs_per_m, shots, rng, noise_model, verify_coverage=False,
-             circuit_builder=mismatch_circuit_measured):
+             circuit_builder=mismatch_circuit_measured, transpile_fn=transpile_for_noise):
     """Run `pairs_per_m` circuits x `shots` shots.
 
     `circuit_builder(read, window) -> (qc, k)` selects the counter under test;
     defaults to the phase counter (mismatch_circuit_measured) so existing
     callers are unaffected. Pass mismatch_circuit_adder_measured to sweep the
     Paper-1 adder counter instead -- same sampling, metrics and noise model.
+
+    `transpile_fn(qc) -> transpiled_qc` selects the transpile target; defaults
+    to the existing all-to-all transpile_for_noise. Pass
+    connectivity.transpile_connectivity_aware for a realistic heavy-hex
+    coupling map instead -- same sampling, metrics, counter and noise model,
+    only the routing assumption changes.
 
     Returns the pooled histogram, the per-pair histograms (kept because pairs
     are the independent unit for the bootstrap) and the control width k.
@@ -156,7 +162,7 @@ def run_cell(scenario, L, p, m, pairs_per_m, shots, rng, noise_model, verify_cov
     for _ in range(pairs_per_m):
         read, window = sample_stratified_pair(L, m, rng)
         qc, k = circuit_builder(read, window)
-        transpiled = transpile_for_noise(qc)
+        transpiled = transpile_fn(qc)
         if verify_coverage:
             assert_full_coverage(noise_model, transpiled,
                                  check_measure=(scenario == "S2"),
@@ -177,12 +183,13 @@ def run_cell(scenario, L, p, m, pairs_per_m, shots, rng, noise_model, verify_cov
     return counts, per_pair_counts, k
 
 
-def circuit_stats(L, seed=SEED_PAIRS, circuit_builder=mismatch_circuit_measured):
+def circuit_stats(L, seed=SEED_PAIRS, circuit_builder=mismatch_circuit_measured,
+                  transpile_fn=transpile_for_noise):
     """Qubit count, transpiled depth and CX count for a representative circuit."""
     rng = random.Random(seed)
     read, window = sample_stratified_pair(L, L // 2, rng)
     qc, k = circuit_builder(read, window)
-    transpiled = transpile_for_noise(qc)
+    transpiled = transpile_fn(qc)
     return {"k": k, "num_qubits": qc.num_qubits, "depth": transpiled.depth(),
             "cx": transpiled.count_ops().get("cx", 0)}
 
