@@ -145,6 +145,44 @@ since S2's thermal relaxation accumulates with circuit time) is an empirical
 question the C4 harness could answer directly, not yet run for this third
 counter.
 
+## 4-way noise comparison: QFT-adder added (all-to-all connectivity)
+
+`results/counter_comparison_2026-09-23_4way_v2.csv`, 960 rows: the C4 harness
+extended to all four counters (adder, phase, depth-optimal, qft_adder) at
+L=2,4,6, all-to-all connectivity (not yet connectivity-aware -- that is the
+natural next run given Section "Connectivity-aware resimulation" below).
+Same scenarios/p-grid/seeds/pairs/shots as the earlier 2-way and 3-way runs.
+All 60 S1 p=0 control cells exactly 1.0.
+`figures/8_counter_comparison_noise_4way.png`.
+
+**QFT-adder never wins, at any (L, p) tested.** It is the outright worst
+counter at every point for L=2, and generally at or near the bottom for
+L=4 and L=6 too (it does briefly edge out depth-optimal at low p for L=4
+and L=6, but never comes close to adder or phase). This tracks its resource
+preview directly: it has the highest CX count of all four counters at every
+L (see the resource preview table further down), and under all-to-all
+connectivity more CX gates means more depolarizing exposure with nothing to
+offset it -- unlike depth-optimal, whose LOWER depth didn't help under
+all-to-all but turned out to matter once realistic connectivity was
+factored in (see below). Whether the same reversal happens for qft_adder
+under heavy-hex routing is an open, unrun question -- flagged, not assumed
+either way, precisely because depth-optimal's own reversal shows resource
+previews and idealized-noise rankings can each be misleading on their own.
+
+Full table (S2, mean over m):
+
+| L | p | adder | phase | depth-optimal | qft-adder | winner |
+|---|---|---|---|---|---|---|
+| 2 | 0.01 | 0.875 | 0.812 | 0.832 | 0.774 | adder |
+| 2 | 0.05 | 0.653 | 0.534 | 0.590 | 0.467 | adder |
+| 4 | 0.01 | 0.677 | 0.606 | 0.597 | 0.567 | adder |
+| 4 | 0.05 | 0.320 | 0.256 | 0.276 | 0.215 | adder |
+| 6 | 0.01 | 0.499 | 0.521 | 0.473 | 0.494 | phase |
+| 6 | 0.05 | 0.177 | 0.198 | 0.190 | 0.176 | phase |
+
+Not yet done: the same 4-way grid under heavy-hex connectivity, and L=8 for
+this comparison.
+
 ## Connectivity-aware resimulation: a real reversal, not just an extension
 
 `results/counter_comparison_2026-09-22_hex.csv`, 720 rows: the exact same

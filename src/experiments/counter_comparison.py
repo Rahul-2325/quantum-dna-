@@ -35,13 +35,15 @@ import matplotlib.pyplot as plt
 from aer_helpers import mismatch_circuit_measured, transpile_for_noise
 from mismatch_adder import mismatch_circuit_adder_measured
 from mismatch_depth_optimal import mismatch_circuit_depth_optimal
+from mismatch_qft_adder import mismatch_circuit_qft_adder_measured
 from noise_degradation import (CSV_FIELDNAMES, P_GRID, READOUT_ERROR, SEED_PAIRS, SEED_SIM,
                                THERMAL, VIRTUAL_RZ, cell_metrics, circuit_stats,
                                git_commit_hash, is_noiseless_control, pair_statistics,
                                run_cell, scenario_noise_model)
 
 COUNTERS = {"adder": mismatch_circuit_adder_measured, "phase": mismatch_circuit_measured,
-           "depth_optimal": mismatch_circuit_depth_optimal}
+           "depth_optimal": mismatch_circuit_depth_optimal,
+           "qft_adder": mismatch_circuit_qft_adder_measured}
 COMPARISON_FIELDNAMES = ["counter"] + CSV_FIELDNAMES
 
 
@@ -134,7 +136,7 @@ def run_comparison(levels, pairs_per_m, shots, results_dir, tag=None, force=Fals
     return csv_path, meta_path
 
 
-MARKERS = {"adder": "o-", "phase": "s-", "depth_optimal": "^-"}
+MARKERS = {"adder": "o-", "phase": "s-", "depth_optimal": "^-", "qft_adder": "d-"}
 
 
 def make_figure(csv_path, out_path, levels):
@@ -157,7 +159,7 @@ def make_figure(csv_path, out_path, levels):
         ax.set_title(f"L={L}"); ax.set_xlabel("2-qubit error rate p")
         ax.set_ylim(0, 1.02)
     axes[0].set_ylabel("P(correct), mean over m"); axes[0].legend()
-    fig.suptitle("Adder vs phase vs depth-optimal mismatch counter, S2 noise")
+    fig.suptitle(f"{' vs '.join(present)} mismatch counter, S2 noise")
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     print(f"wrote {out_path}")
