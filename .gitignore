@@ -1,4 +1,5 @@
-__pycache__/
-.venv/
 .ipynb_checkpoints/
+.venv/
+__pycache__/
 papers/*.pdf
+scratch_*.py
