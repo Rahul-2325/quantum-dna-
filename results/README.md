@@ -145,6 +145,41 @@ since S2's thermal relaxation accumulates with circuit time) is an empirical
 question the C4 harness could answer directly, not yet run for this third
 counter.
 
+## 3-way noise comparison: depth-optimal added (item 1 of the follow-up list)
+
+`results/counter_comparison_2026-09-22_3way.csv`, 720 rows: the C4 harness
+extended to all three counters (adder, phase, depth-optimal) at L=2,4,6.
+Same scenarios/p-grid/seeds/pairs/shots as the 2-way run. All 45 S1 p=0
+control cells are exactly 1.0. Figure:
+`figures/6_counter_comparison_noise_3way.png`.
+
+**Depth-optimal's depth advantage does not translate into a noise-robustness
+advantage -- it loses at every (L, p) tested here, never winning even once.**
+The adder wins every point at L=2 and L=4; at L=6 the earlier
+adder/phase crossover survives with depth-optimal added, and depth-optimal
+sits at or below both of them throughout (e.g. L=4, p=0.01: adder 0.677,
+phase 0.606, depth-optimal 0.597; L=6, p=0.01: phase 0.521, adder 0.499,
+depth-optimal 0.473).
+
+The likely reason, and it is a real, checkable trade-off rather than a
+guess: `mismatch_circuit_depth_optimal` needs a FULL `L`-qubit control
+register (reused/reset across rounds, but still `L` physical qubits present
+throughout), not just the phase counter's `k = ceil(log2(L+1))` qubits --
+at L=8 the bare counter alone needs 16 qubits (2x its input size) against
+the phase counter's 12 and the adder's 14 (see the depth-optimal resource
+table above). More physical qubits under S2's per-qubit thermal relaxation
+and readout error is more surface area for noise to act on, and here that
+appears to outweigh the benefit of a shallower circuit. This is a concrete
+illustration that "lower depth" and "more noise-robust" are not the same
+claim, and a resource preview using depth/CX counts alone (as the earlier
+sections did, honestly, before this run existed) can be misleading about
+which counter would actually perform better on noisy hardware.
+
+Not yet done: L=8 for this 3-way comparison, and a check of whether this
+holds under the connectivity-aware (heavy-hex) transpilation discussed
+earlier -- routing overhead could plausibly change this picture again,
+since it would fall differently on circuits with different qubit counts.
+
 ## Post-selection (task 3, first piece)
 
 `src/experiments/post_selection.py` computes `P(correct | in-range) =
