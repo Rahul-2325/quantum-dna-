@@ -1,6 +1,6 @@
 # Project Status: Noise-Aware Quantum DNA Mismatch Counting
 
-**Last updated:** 2026-09-23. This document explains what has been built, verified,
+**Last updated:** 2026-09-29. This document explains what has been built, verified,
 and found so far, what is running right now, and what comes next — written to be
 handed to someone (e.g. a supervisor) who was not in the room for the work itself.
 
@@ -97,13 +97,21 @@ and combined:
 This is the part meant to differentiate the project from a re-implementation
 exercise. Three pieces:
 
-### 4.1 The first three-way (now four-way) noise comparison of counting methods
+### 4.1 The first four-way noise comparison of counting methods
 
 Nobody has published a noise-realistic comparison between a phase-kickback
-counter, a ripple-carry adder counter, and a QFT-adder counter for this
-problem. We now have one — see Section 5 for the headline finding, which is
-genuinely surprising (a counter that looks worse on paper turns out to be
-the best choice under realistic conditions).
+counter, a ripple-carry adder counter, a depth-optimal counter, and a
+QFT-adder counter for this problem. We now have one, completed
+2026-09-23 (`results/counter_comparison_2026-09-23_4way_v2.csv`, 960 rows,
+verified: all 60 noiseless control cells return exactly the correct answer).
+Under idealized (all-to-all) connectivity, the new QFT-adder counter **never
+wins** at any read length or error rate tested — it is the outright worst
+counter for short reads, and stays near the bottom for longer ones. This
+tracks its resource cost directly: it has the highest gate count of all four
+counters at every length. Whether that holds up once realistic qubit
+connectivity is factored in (see 4.2, where a *different* counter's ranking
+did flip) is not yet tested — flagged as the natural next run, not assumed
+either way.
 
 ### 4.2 Connectivity-aware re-simulation
 
@@ -162,6 +170,15 @@ method requires) is not yet built.
    reference, with a clear margin over every wrong position, at every noise
    level tested.
 
+5. **The new QFT-adder counter (the main piece of this session's novelty
+   work) does not outperform the existing three counters** under idealized
+   connectivity — it loses at every read length and error rate tested,
+   consistent with it having the highest gate count of the four. This is a
+   real, useful negative result (it directly answers the question the
+   literature search raised), not a failure of the work; the open question
+   it leaves is whether that changes under realistic qubit connectivity,
+   given finding #3 already showed connectivity can reverse a ranking.
+
 ## 6. Process notes worth knowing about (things caught and fixed, not swept under the rug)
 
 - An early attempt at the depth-optimal counter passed every simple test but
@@ -184,35 +201,31 @@ method requires) is not yet built.
 
 ## 7. What is running right now
 
-A **four-way noise comparison** (adder vs. phase vs. depth-optimal vs.
-QFT-adder, under realistic — not yet connectivity-constrained — noise) is
-running in the background. It was interrupted once by an environment restart
-(no data lost, thanks to the incremental-save design above) and has been
-restarted. Expected runtime: roughly two hours from restart. Results will be
-written to `results/counter_comparison_2026-09-23_4way_v2.csv` plus a
-matching `_meta.json`, and reported here once complete.
+Nothing. The four-way noise comparison (Section 4.1/5.5) completed on
+2026-09-23 (960/960 rows, all sanity checks passed, 87.7 minutes) and is
+committed. It was interrupted once mid-run by an environment restart before
+that — no data was lost (the incremental-save design saved 584 of 960 rows
+before the interruption), and it was simply restarted from scratch rather
+than resumed, since the harness does not yet support resuming a partial grid.
 
 ## 8. Next steps, and why
 
 In rough priority order:
 
-1. **Finish and report the four-way comparison** (running now) — establishes
-   whether the QFT-adder counter is competitive with the other three under
-   realistic noise, closing the loop on the novelty work in Section 4.1.
-2. **Re-run the four-way comparison under realistic connectivity** — given
-   Section 5's finding #3, this is not optional if the four-way result is
-   going to be trusted; connectivity has already been shown to change the
-   ranking once.
-3. **Decide on the Grover-oracle direction** — the feasibility check in
-   Section 4.3 passed. The next decision is whether to invest in building the
-   full search algorithm (a substantial piece of work: threshold marking,
-   uncomputation, and the repeated amplification steps) now that the
-   riskiest assumption behind it has been validated, or to prioritize
-   finishing the more bounded four-way comparison work first.
-4. **Extend the missing L=8 legs** for both the plain and connectivity-aware
+1. **Re-run the four-way comparison under realistic (heavy-hex) connectivity**
+   — now the top priority. Section 5's finding #3 already showed connectivity
+   can reverse which counter wins; finding #5 (QFT-adder losing under
+   idealized connectivity) has not yet been checked against that same effect,
+   and it is the one piece of this session's headline novelty work still
+   resting on an idealized noise assumption.
+2. **Decide on the Grover-oracle direction** — the feasibility check in
+   Section 4.3 passed. The decision is whether to invest in building the full
+   search algorithm (threshold marking, uncomputation, and the repeated
+   amplification steps) now, or after item 1.
+3. **Extend the missing L=8 legs** for both the plain and connectivity-aware
    four-way comparisons, to match the depth of data already collected for
    the original three-way and single-counter noise sweeps.
-5. **Only after 1–4:** begin drafting the paper's results section, per this
+4. **Only after 1–3:** begin drafting the paper's results section, per this
    project's own working rule that no narrative claims should be written
    before their supporting data exists and is saved.
 
