@@ -48,16 +48,28 @@ COMPARISON_FIELDNAMES = ["counter"] + CSV_FIELDNAMES
 
 
 def run_comparison(levels, pairs_per_m, shots, results_dir, tag=None, force=False,
-                   transpile_fn=transpile_for_noise):
+                   transpile_fn=transpile_for_noise, resume=False):
     """Same incremental-write-per-row design as run_sweep, and for the same reason:
-    a long Aer run at L=8 has twice raised a hard MemoryError partway through, so
-    batching all rows into memory and writing once at the end risks losing a full
-    run's worth of completed cells to one crash near the finish line.
+    a long Aer run has repeatedly raised a hard, non-deterministic crash
+    (MemoryError, and on this machine sometimes a segfault) partway through --
+    see aer_helpers.MAX_CIRCUITS_PER_JOB's docstring. Batching all rows into
+    memory and writing once at the end would risk losing a full run's worth of
+    completed cells to one crash near the finish line.
 
     `transpile_fn` selects the transpile target; defaults to the existing
     all-to-all transpile_for_noise. Pass
     connectivity.transpile_connectivity_aware for a realistic heavy-hex
     coupling map instead.
+
+    `resume=True`: if csv_path already exists (from a prior crashed attempt),
+    read it, skip every (counter, scenario, L, p, m) cell already present, and
+    APPEND the remaining cells instead of starting over. This exists because a
+    segfault kills the whole process -- there is no way to catch it and retry
+    from within the same run, so an outer loop must restart the script, and
+    restarting from scratch every time would mean a sufficiently unstable
+    environment could prevent the grid from ever finishing. Without --resume
+    (the default), behavior is unchanged: a pre-existing csv_path/meta_path
+    still raises FileExistsError unless --force.
     """
     import qiskit
     import qiskit_aer
@@ -67,21 +79,32 @@ def run_comparison(levels, pairs_per_m, shots, results_dir, tag=None, force=Fals
     suffix = f"_{tag}" if tag else ""
     csv_path = results_dir / f"counter_comparison_{stamp}{suffix}.csv"
     meta_path = results_dir / f"counter_comparison_{stamp}{suffix}_meta.json"
-    if not force:
+
+    already_done = set()
+    if resume and csv_path.exists():
+        with csv_path.open(newline="", encoding="utf-8") as handle:
+            for row in csv.DictReader(handle):
+                already_done.add((row["counter"], row["scenario"],
+                                  int(row["L"]), float(row["p"]), int(row["m"])))
+        print(f"--resume: {len(already_done)} cells already in {csv_path}, skipping those")
+    elif not force:
         for path in (csv_path, meta_path):
             if path.exists():
-                raise FileExistsError(f"{path} already exists; pass --tag or --force")
+                raise FileExistsError(
+                    f"{path} already exists; pass --tag, --force, or --resume")
 
     started = time.perf_counter()
     stats = {(counter, L): circuit_stats(L, circuit_builder=builder, transpile_fn=transpile_fn)
              for counter, builder in COUNTERS.items() for L in levels}
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    row_count = 0
-    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+    write_header = not (resume and csv_path.exists())
+    row_count = len(already_done)
+    with csv_path.open("a" if resume else "w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=COMPARISON_FIELDNAMES)
-        writer.writeheader()
-        handle.flush()
+        if write_header:
+            writer.writeheader()
+            handle.flush()
 
         for counter, builder in COUNTERS.items():
             for scenario in ("S1", "S2"):
@@ -91,6 +114,8 @@ def run_comparison(levels, pairs_per_m, shots, results_dir, tag=None, force=Fals
                         noise_model = scenario_noise_model(scenario, p, num_qubits)
                         noiseless_control = is_noiseless_control(scenario, p)
                         for m in range(L + 1):
+                            if (counter, scenario, L, p, m) in already_done:
+                                continue
                             rng = random.Random(SEED_PAIRS + 7919 * L + 104729 * m)
                             started_cell = time.perf_counter()
                             counts, per_pair, k = run_cell(
@@ -176,6 +201,9 @@ def main():
         Path(__file__).resolve().parents[2] / "figures"))
     parser.add_argument("--tag", default=None)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--resume", action="store_true",
+                        help="continue an existing (possibly crash-interrupted) run "
+                             "instead of starting the grid over")
     parser.add_argument("--connectivity-aware", action="store_true",
                         help="route onto a heavy-hex coupling map instead of all-to-all")
     args = parser.parse_args()
@@ -188,7 +216,7 @@ def main():
 
     csv_path, _ = run_comparison(args.levels, args.pairs_per_m, args.shots,
                                  args.results_dir, tag=args.tag, force=args.force,
-                                 transpile_fn=transpile_fn)
+                                 transpile_fn=transpile_fn, resume=args.resume)
     figures_dir = Path(args.figures_dir)
     figures_dir.mkdir(exist_ok=True)
     suffix = f"_{args.tag}" if args.tag else ""
