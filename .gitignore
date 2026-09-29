@@ -3,4 +3,4 @@
 __pycache__/
 papers/*.pdf
 scratch_*.py
-full_suite_log.txt
+*_log.txt
