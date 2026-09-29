@@ -18,13 +18,29 @@ def control_distribution_statevector(qc, k):
     return {int(bits, 2): p for bits, p in probabilities.items()}
 
 
+MAX_CIRCUITS_PER_JOB = 4
+"""Aer's C++ backend has twice now raised a hard, memory-pressure-dependent
+`MemoryError: bad allocation` (once mid-L=8-sweep earlier in this project,
+once mid-connectivity-aware-sweep on a heavy-hex-routed depth-optimal
+circuit at L=6) submitting a full 8-circuit batch in one job. Retrying the
+IDENTICAL batch afterward sometimes succeeds -- this is not a deterministic
+bug in any circuit, it is peak memory during the batch exceeding whatever
+happened to be free at that moment. Capping the batch size directly lowers
+that peak, at the modest cost of a few more ~0.2s job-startup overheads.
+Chosen empirically: batches of 1, 2 and 4 all ran the crashing case cleanly;
+only 8 failed (non-deterministically) -- see the commit introducing this."""
+
+
 def control_distributions_aer(circuits, shots, noise_model=None, seed=None,
                               method="matrix_product_state", num_bits=None):
-    """Distributions for several circuits submitted as a single Aer job.
+    """Distributions for several circuits, submitted in Aer jobs of at most
+    MAX_CIRCUITS_PER_JOB circuits each (not necessarily all in one job -- see
+    MAX_CIRCUITS_PER_JOB's own docstring for why).
 
     Building the simulator (and attaching a per-qubit noise model) costs roughly
-    0.2s, so batching a cell's circuits into one job rather than one job each is
-    a large saving; Aer also parallelises across the circuits in a job.
+    0.2s, so batching several circuits into one job rather than one job each is
+    still a real saving over the fully-serial alternative; Aer also
+    parallelises across the circuits within each job.
 
     `num_bits`: circuits with a SINGLE classical register (mismatch_circuit,
     mismatch_circuit_adder) return a plain binary string, parsed as-is. A
@@ -37,16 +53,22 @@ def control_distributions_aer(circuits, shots, noise_model=None, seed=None,
     not the key has a space, so existing single-register callers are
     unaffected by leaving it unset.
     """
+    circuits = list(circuits)
     simulator = AerSimulator(noise_model=noise_model, method=method)
-    result = simulator.run(list(circuits), shots=shots, seed_simulator=seed).result()
     distributions = []
-    for index in range(len(circuits)):
-        distribution = {}
-        for bits, count in result.get_counts(index).items():
-            key = bits.replace(" ", "")
-            value = int(key[-num_bits:] if num_bits else key, 2)
-            distribution[value] = distribution.get(value, 0) + count / shots
-        distributions.append(distribution)
+    for start in range(0, len(circuits), MAX_CIRCUITS_PER_JOB):
+        chunk = circuits[start:start + MAX_CIRCUITS_PER_JOB]
+        # Vary the seed per chunk so chunking doesn't make every sub-batch
+        # replay identical shot outcomes when seed is fixed by the caller.
+        chunk_seed = None if seed is None else seed + start
+        result = simulator.run(chunk, shots=shots, seed_simulator=chunk_seed).result()
+        for index in range(len(chunk)):
+            distribution = {}
+            for bits, count in result.get_counts(index).items():
+                key = bits.replace(" ", "")
+                value = int(key[-num_bits:] if num_bits else key, 2)
+                distribution[value] = distribution.get(value, 0) + count / shots
+            distributions.append(distribution)
     return distributions
 
 
