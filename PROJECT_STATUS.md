@@ -1,6 +1,6 @@
 # Project Status: Noise-Aware Quantum DNA Mismatch Counting
 
-**Last updated:** 2026-09-29. This document explains what has been built, verified,
+**Last updated:** 2026-09-29 (Grover oracle verified). This document explains what has been built, verified,
 and found so far, what is running right now, and what comes next — written to be
 handed to someone (e.g. a supervisor) who was not in the room for the work itself.
 
@@ -31,7 +31,7 @@ QFT-adder counter, and the Grover-oracle feasibility check) — see Section 4.
 
 ## 3. What is implemented and verified
 
-Every claim below has an automated test behind it (currently **93 tests**,
+Every claim below has an automated test behind it (currently **100 tests**,
 `tests/`), and every result file has a matching `results/README.md` entry
 documenting exactly what it measures and its limitations. Nothing here is
 reported without having been checked against a known-correct answer first —
@@ -122,23 +122,36 @@ heavy-hex qubit layout (generated natively, no real hardware account needed)
 and found that it **reverses** which counter wins, not just makes everything
 uniformly worse. This is a substantive, checkable finding, not a footnote.
 
-### 4.3 Grover-oracle feasibility check (in progress)
+### 4.3 Grover-oracle: the hard half is built and verified
 
 QShift-SA's approach searches over *all* possible read alignment positions
 at once using Grover's algorithm, rather than checking each position one at
 a time (which is what every one of our four counters currently does). Nobody
-has combined a *phase-kickback* counter with this kind of search. Before
-committing to building the full search algorithm (a substantial undertaking),
-we validated the hardest and riskiest sub-piece in isolation: can a circuit
-correctly count mismatches at *every* candidate alignment position
-*simultaneously*, while all positions are held in quantum superposition
-together? A small test case (checking all 6 possible alignment positions of
-a 2-letter read against a 7-letter reference, at once) came back with the
-exactly correct mismatch count at every position, each with the exact
-probability quantum mechanics predicts. This is real evidence the idea is
-sound, though the full search algorithm (marking good matches, undoing
-intermediate computation, and the repeated amplification steps Grover's
-method requires) is not yet built.
+has combined a *phase-kickback* counter with this kind of search.
+
+This is no longer just a feasibility probe — the full ORACLE (the part of
+Grover's algorithm specific to this problem, as opposed to the generic
+search machinery around it) is built and verified as real project code
+(`src/grover_oracle.py`, `tests/test_grover_oracle.py`, 7 tests). It does
+three things coherently, in one circuit: counts mismatches at *every*
+candidate shift position simultaneously (while all positions are held in
+quantum superposition together), marks shifts whose count is at or below a
+chosen threshold with the phase flip Grover's algorithm needs, and cleans up
+every register used along the way. Both things that could plausibly have
+gone wrong were checked directly rather than assumed: (1) every register
+except the "which shift" register returns to a single clean state with
+probability exactly 1.0 after cleanup — no leftover entanglement — checked
+across 6 different reference/read/threshold combinations; (2) the "which
+shift" register's raw quantum amplitude (not just probability, which cannot
+see a phase flip) carries the opposite sign for "good" vs. "bad" shifts,
+exactly as the marking is supposed to produce.
+
+What remains is the generic part: the "diffusion" step that amplifies the
+marked shifts' likelihood of being observed, and repeating oracle+diffusion
+the right number of times. That is standard, well-documented machinery, not
+something this project needs to invent — but it is not yet built, so there
+is not yet a full working search, only a verified-correct oracle for it to
+be built on.
 
 ## 5. Key findings so far, in order of how far they'd move the needle in a paper
 
@@ -218,10 +231,11 @@ In rough priority order:
    idealized connectivity) has not yet been checked against that same effect,
    and it is the one piece of this session's headline novelty work still
    resting on an idealized noise assumption.
-2. **Decide on the Grover-oracle direction** — the feasibility check in
-   Section 4.3 passed. The decision is whether to invest in building the full
-   search algorithm (threshold marking, uncomputation, and the repeated
-   amplification steps) now, or after item 1.
+2. **Build the diffusion operator and amplification loop for Grover** — the
+   oracle it would act on is now verified correct (Section 4.3), which is
+   what makes this the natural next step rather than a leap of faith. This
+   is standard, well-documented machinery, not a new risk area like the
+   oracle was.
 3. **Extend the missing L=8 legs** for both the plain and connectivity-aware
    four-way comparisons, to match the depth of data already collected for
    the original three-way and single-counter noise sweeps.
@@ -232,7 +246,7 @@ In rough priority order:
 ## 9. Where things live
 
 - `src/` — all circuit and experiment code, one file per counter/technique.
-- `tests/` — the verification suite (93 tests); run with `pytest -q` from the
+- `tests/` — the verification suite (100 tests); run with `pytest -q` from the
   project's `.venv`.
 - `results/` — every experiment's raw output (`.csv`), metadata (`.json`,
   including exact seeds and the git commit that produced it), and a detailed
