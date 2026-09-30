@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import time
 from datetime import date
 from pathlib import Path
@@ -47,8 +48,27 @@ ITERATIONS_GRID = (0, 1, 2, 3, 4)
 SHOTS = 1024
 
 FIELDNAMES = ["scenario", "p", "iterations", "num_qubits", "cx_count", "depth",
-             "p_good", "p_bad", "p_leftover", "top_shift_is_good",
+             "expected_p_good", "p_good", "p_bad", "p_leftover", "top_shift_is_good",
              "shots", "seed_sim", "elapsed_s"]
+
+
+def theoretical_p_good(n_total, n_marked, iterations):
+    """Closed-form noiseless Grover success probability sin^2((2t+1)*theta),
+    theta = arcsin(sqrt(M/N)). Recorded per row so noiseless measurements can
+    be checked against known-correct theory, and because the iterations grid
+    swept here deliberately includes values past the optimum, where success
+    probability OSCILLATES and can fall far below even the flat 1/N
+    baseline -- the real, well-known Grover "over-rotation" phenomenon, not
+    a bug. (Confirmed directly in this experiment: at iterations=4 for the
+    fixed test case below, theory predicts ~1.2% and a zero-circuit-noise
+    measurement gave ~1.0% -- a worse-than-random outcome from running the
+    "right" algorithm for too many rounds.) A blanket assertion that more
+    iterations must always find the good shift is therefore false; this
+    formula is what such a check has to be compared against instead."""
+    if n_marked <= 0:
+        return 0.0
+    theta = math.asin(math.sqrt(min(n_marked, n_total) / n_total))
+    return math.sin((2 * iterations + 1) * theta) ** 2
 
 
 def build_measured_circuit(iterations):
@@ -105,6 +125,8 @@ def run_sweep(iterations_grid, results_dir, tag=None, force=False, shots=SHOTS):
             tqc = transpile_for_noise(qc)
             cx_count = tqc.count_ops().get("cx", 0)
             depth = tqc.depth()
+            expected_p_good = theoretical_p_good(2 ** k_shift, len(good_shifts),
+                                                 actual_iterations)
 
             for scenario in ("S1", "S2"):
                 for p in P_GRID:
@@ -114,18 +136,23 @@ def run_sweep(iterations_grid, results_dir, tag=None, force=False, shots=SHOTS):
                         tqc, shots=shots, noise_model=noise_model,
                         seed=SEED_SIM, method="statevector", num_bits=k_shift)
                     metrics = cell_metrics(dist, k_shift, shifts, good_shifts)
-                    if actual_iterations >= 1 and is_noiseless_control(scenario, p):
-                        # A search that has actually run at least one
-                        # iteration must still get the right answer with
-                        # zero circuit noise -- this is the noiseless
-                        # correctness guarantee grover_search.py already
-                        # verified, re-checked here through the sampling
-                        # harness itself (shot noise only, no circuit noise).
-                        assert metrics["top_shift_is_good"] == 1, (
-                            f"noiseless control top shift is not good at "
+                    if is_noiseless_control(scenario, p):
+                        # Zero circuit noise (only shot noise remains): the
+                        # measured p_good must track the closed-form theory,
+                        # whatever value that happens to be at this
+                        # iteration count -- including the oscillation's
+                        # troughs, not just its peaks. Tolerance is a 6-sigma
+                        # binomial shot-noise band plus a small numerical
+                        # floor, not an arbitrary fudge factor.
+                        tol = 6 * math.sqrt(
+                            expected_p_good * (1 - expected_p_good) / shots) + 0.02
+                        assert abs(metrics["p_good"] - expected_p_good) < tol, (
+                            f"noiseless p_good={metrics['p_good']} does not "
+                            f"match theory={expected_p_good} (tol={tol:.4f}) at "
                             f"iterations={actual_iterations}: {dist}")
                     row = dict(scenario=scenario, p=p, iterations=actual_iterations,
                               num_qubits=qc.num_qubits, cx_count=cx_count, depth=depth,
+                              expected_p_good=expected_p_good,
                               shots=shots, seed_sim=SEED_SIM,
                               elapsed_s=time.perf_counter() - started_cell, **metrics)
                     writer.writerow(row)
