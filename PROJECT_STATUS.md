@@ -1,6 +1,7 @@
 # Project Status: Noise-Aware Quantum DNA Mismatch Counting
 
-**Last updated:** 2026-09-29 (Grover oracle verified). This document explains what has been built, verified,
+**Last updated:** 2026-09-30 (Grover diffusion+search built and verified; connectivity-aware
+4-way sweep completed; noise-aware Grover search experiment running). This document explains what has been built, verified,
 and found so far, what is running right now, and what comes next — written to be
 handed to someone (e.g. a supervisor) who was not in the room for the work itself.
 
@@ -31,7 +32,7 @@ QFT-adder counter, and the Grover-oracle feasibility check) — see Section 4.
 
 ## 3. What is implemented and verified
 
-Every claim below has an automated test behind it (currently **100 tests**,
+Every claim below has an automated test behind it (currently **119 tests**,
 `tests/`), and every result file has a matching `results/README.md` entry
 documenting exactly what it measures and its limitations. Nothing here is
 reported without having been checked against a known-correct answer first —
@@ -122,36 +123,78 @@ heavy-hex qubit layout (generated natively, no real hardware account needed)
 and found that it **reverses** which counter wins, not just makes everything
 uniformly worse. This is a substantive, checkable finding, not a footnote.
 
-### 4.3 Grover-oracle: the hard half is built and verified
+### 4.3 Grover search: oracle, diffusion, and amplification loop, all built and verified
 
 QShift-SA's approach searches over *all* possible read alignment positions
 at once using Grover's algorithm, rather than checking each position one at
 a time (which is what every one of our four counters currently does). Nobody
 has combined a *phase-kickback* counter with this kind of search.
 
-This is no longer just a feasibility probe — the full ORACLE (the part of
-Grover's algorithm specific to this problem, as opposed to the generic
-search machinery around it) is built and verified as real project code
-(`src/grover_oracle.py`, `tests/test_grover_oracle.py`, 7 tests). It does
-three things coherently, in one circuit: counts mismatches at *every*
-candidate shift position simultaneously (while all positions are held in
-quantum superposition together), marks shifts whose count is at or below a
-chosen threshold with the phase flip Grover's algorithm needs, and cleans up
-every register used along the way. Both things that could plausibly have
-gone wrong were checked directly rather than assumed: (1) every register
-except the "which shift" register returns to a single clean state with
-probability exactly 1.0 after cleanup — no leftover entanglement — checked
-across 6 different reference/read/threshold combinations; (2) the "which
-shift" register's raw quantum amplitude (not just probability, which cannot
-see a phase flip) carries the opposite sign for "good" vs. "bad" shifts,
-exactly as the marking is supposed to produce.
+The full search is now built and verified as real project code
+(`src/grover_oracle.py`, `src/grover_search.py`, `tests/test_grover_oracle.py`
++ `tests/test_grover_search.py`, 15 tests total). The ORACLE does three
+things coherently, in one circuit: counts mismatches at *every* candidate
+shift position simultaneously (while all positions are held in quantum
+superposition together), marks shifts whose count is at or below a chosen
+threshold with the phase flip Grover's algorithm needs, and cleans up every
+register used along the way. On top of that, the DIFFUSION operator
+(inversion about the mean) and the amplification loop (repeated
+oracle+diffusion) are built and verified against the textbook formula and
+against real amplification behaviour.
 
-What remains is the generic part: the "diffusion" step that amplifies the
-marked shifts' likelihood of being observed, and repeating oracle+diffusion
-the right number of times. That is standard, well-documented machinery, not
-something this project needs to invent — but it is not yet built, so there
-is not yet a full working search, only a verified-correct oracle for it to
-be built on.
+Two real bugs were found and fixed while building this, both the kind that
+would have silently produced wrong results without the specific check that
+caught them:
+
+1. **Leftover shift-register branches were being spuriously marked "good".**
+   Whenever the number of real alignment positions isn't itself a power of
+   two (i.e. almost always), the shift register has to be padded to the next
+   power of two, leaving "leftover" branches with no real alignment behind
+   them. Because those branches never get a reference window loaded, their
+   mismatch count comes out as zero by default — which the original oracle
+   then marked as "good" for any non-negative threshold, exactly as if it
+   were a real match. This wouldn't have shown up in the oracle-only tests
+   (which only ever checked real shifts), but it would have silently broken
+   every Grover amplification run whenever the shift count wasn't a power of
+   two. Fixed with a persistent `valid` ancilla (computed the same way as the
+   existing per-shift decoder, but left set through the marking step instead
+   of immediately uncomputed) that gates the marking so leftover branches are
+   never touched.
+2. **The diffuser's own test caught two mistakes — one in the circuit, one in
+   the test.** The textbook diffuser construction realized the correct
+   operator up to an overall global phase of -1 (physically meaningless, but
+   worth matching to the textbook formula exactly, since it's a citable
+   circuit); fixed with an explicit `global_phase` correction. Separately, the
+   first draft of the end-to-end amplification test asserted leftover
+   branches must end up at ~zero probability — which is actually FALSE: standard
+   Grover dynamics keeps every *unmarked* state (bad real shifts and leftover
+   branches alike) at exactly equal, generally nonzero probability throughout,
+   never driven to zero. The test was rewritten to check the property that
+   actually matters (leftover and bad shifts carry identical per-state
+   probability; good shifts carry far more), not a superficially plausible
+   but wrong one.
+
+Both things that could plausibly have gone wrong with the oracle itself were
+checked directly rather than assumed: (1) every register except the "which
+shift" register returns to a single clean state with probability exactly
+1.0 after cleanup — no leftover entanglement — checked across 6 different
+reference/read/threshold combinations; (2) the "which shift" register's raw
+quantum amplitude (not just probability, which cannot see a phase flip)
+carries the opposite sign for "good" vs. "bad" shifts. For the full search,
+end-to-end amplification was checked directly against known-good/bad shifts
+for cases with genuine leftover branches, confirming strong amplification of
+the true good shift(s) and correct (non-privileged) treatment of leftover
+branches.
+
+**Open question, now being tested (Section 7): does this amplification
+survive realistic noise?** The verification above is all at zero circuit
+noise. A quick feasibility check found the amplification circuit needs
+roughly an order of magnitude more CX gates than any of the four direct
+counters at comparable read length (~1100 CX at the noiseless-optimal 2
+iterations, vs. low hundreds for the direct counters) — enough, on a rough
+estimate, to matter a great deal once the same depolarizing/thermal/readout
+noise model used everywhere else in this project is applied. `src/experiments/grover_noise.py`
+is built to measure this directly; see Section 7 for its current status.
 
 ## 5. Key findings so far, in order of how far they'd move the needle in a paper
 
@@ -183,14 +226,19 @@ be built on.
    reference, with a clear margin over every wrong position, at every noise
    level tested.
 
-5. **The new QFT-adder counter (the main piece of this session's novelty
-   work) does not outperform the existing three counters** under idealized
-   connectivity — it loses at every read length and error rate tested,
-   consistent with it having the highest gate count of the four. This is a
-   real, useful negative result (it directly answers the question the
-   literature search raised), not a failure of the work; the open question
-   it leaves is whether that changes under realistic qubit connectivity,
-   given finding #3 already showed connectivity can reverse a ranking.
+5. **The new QFT-adder counter does not outperform the existing three
+   counters under idealized connectivity** — it loses at every read length
+   and error rate tested, consistent with it having the highest gate count
+   of the four. Finding #3 raised the open question of whether this survives
+   realistic connectivity, the way depth-optimal's own all-to-all loss did
+   not. **Answer: partially.** Under heavy-hex routing, qft-adder still never
+   wins a single cell, but at L=6 it stops being the clear loser and closes
+   most of the gap — beating the adder counter outright at L=6, p=0.01
+   (0.276 vs. 0.255) and landing within 0.003 of all three other counters at
+   L=6, p=0.05. At L=2 and L=4 it remains clearly last. Same qualitative
+   story as depth-optimal's reversal (real routing overhead falls differently
+   on high-CX-count circuits than the idealized picture suggests), but here
+   it closes the gap rather than crossing all the way to a win.
 
 ## 6. Process notes worth knowing about (things caught and fixed, not swept under the rug)
 
@@ -214,44 +262,65 @@ be built on.
 
 ## 7. What is running right now
 
-Nothing. The four-way noise comparison (Section 4.1/5.5) completed on
-2026-09-23 (960/960 rows, all sanity checks passed, 87.7 minutes) and is
-committed. It was interrupted once mid-run by an environment restart before
-that — no data was lost (the incremental-save design saved 584 of 960 rows
-before the interruption), and it was simply restarted from scratch rather
-than resumed, since the harness does not yet support resuming a partial grid.
+The four-way connectivity-aware comparison (item 1 of the prior next-steps
+list) completed successfully on 2026-09-30 (960/960 rows, 143.5 minutes,
+zero crashes needed thanks to the new crash-resilient supervisor described
+below) and is committed — see finding #5 above and `results/README.md`.
+
+The Grover diffusion operator and amplification loop (prior item 2) are
+also now built and verified — see Section 4.3.
+
+**Currently running: `src/experiments/grover_noise.py`**, the noise-aware
+Grover search experiment described at the end of Section 4.3 — does the
+verified-correct amplification survive the same S1/S2 noise model used
+throughout this project? Sweeps `iterations` (0-4) x the standard P_GRID,
+on a fixed test case with one known good shift among six real shifts (two
+leftover). Results not yet in; see `results/README.md` once complete.
+
+Two reliability items built this session, both proven necessary in
+practice, not speculative:
+- **`counter_comparison.py --resume`**: the connectivity-aware 4-way sweep
+  had crashed repeatedly (genuine, non-deterministic segfaults, confirmed by
+  reproducing and ruling out any specific circuit as the cause) before this
+  was built. A segfault kills the whole process, so no in-process
+  try/except can catch and retry it — `--resume` lets a restarted process
+  skip cells already written to the CSV instead of recomputing the whole
+  grid.
+- **`supervised_run.py`**: the outer loop that actually does the restarting
+  — invokes `counter_comparison.py` as a subprocess, and relaunches it with
+  `--resume` if it dies before writing `meta.json`, up to a bounded retry
+  count. The 2026-09-30 four-way run needed zero retries once this was in
+  place, but the machinery exists because three prior unsupervised attempts
+  all crashed.
 
 ## 8. Next steps, and why
 
 In rough priority order:
 
-1. **Re-run the four-way comparison under realistic (heavy-hex) connectivity**
-   — now the top priority. Section 5's finding #3 already showed connectivity
-   can reverse which counter wins; finding #5 (QFT-adder losing under
-   idealized connectivity) has not yet been checked against that same effect,
-   and it is the one piece of this session's headline novelty work still
-   resting on an idealized noise assumption.
-2. **Build the diffusion operator and amplification loop for Grover** — the
-   oracle it would act on is now verified correct (Section 4.3), which is
-   what makes this the natural next step rather than a leap of faith. This
-   is standard, well-documented machinery, not a new risk area like the
-   oracle was.
-3. **Extend the missing L=8 legs** for both the plain and connectivity-aware
+1. **Finish and analyze the noise-aware Grover search experiment** (running
+   now, Section 7) — the natural next question now that the search itself
+   is verified correct: does it survive realistic noise, or is its
+   dramatically higher gate count (an order of magnitude more CX gates than
+   any direct counter at comparable length) enough on its own to erase the
+   amplification advantage at noise levels the direct counters handle
+   comfortably? This is a genuinely new empirical question — not answered by
+   QShift-SA or any of the three reference papers.
+2. **Extend the missing L=8 legs** for both the plain and connectivity-aware
    four-way comparisons, to match the depth of data already collected for
    the original three-way and single-counter noise sweeps.
-4. **Only after 1–3:** begin drafting the paper's results section, per this
+3. **Only after 1–2:** begin drafting the paper's results section, per this
    project's own working rule that no narrative claims should be written
    before their supporting data exists and is saved.
 
 ## 9. Where things live
 
 - `src/` — all circuit and experiment code, one file per counter/technique.
-- `tests/` — the verification suite (100 tests); run with `pytest -q` from the
+- `tests/` — the verification suite (119 tests); run with `pytest -q` from the
   project's `.venv`.
 - `results/` — every experiment's raw output (`.csv`), metadata (`.json`,
   including exact seeds and the git commit that produced it), and a detailed
   `README.md` explaining every column and every limitation.
 - `figures/` — generated circuit diagrams and comparison plots.
-- Every unit of work above corresponds to one or more Git commits (25 so
-  far), each with a detailed message explaining what changed, what was
-  verified, and why — visible via `git log`.
+- Every unit of work above corresponds to one or more Git commits, each with
+  a detailed message explaining what changed, what was verified, and why —
+  visible via `git log`.
