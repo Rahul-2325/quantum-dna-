@@ -32,7 +32,7 @@ QFT-adder counter, and the Grover-oracle feasibility check) — see Section 4.
 
 ## 3. What is implemented and verified
 
-Every claim below has an automated test behind it (currently **119 tests**,
+Every claim below has an automated test behind it (currently **120 tests**,
 `tests/`), and every result file has a matching `results/README.md` entry
 documenting exactly what it measures and its limitations. Nothing here is
 reported without having been checked against a known-correct answer first —
@@ -186,15 +186,24 @@ for cases with genuine leftover branches, confirming strong amplification of
 the true good shift(s) and correct (non-privileged) treatment of leftover
 branches.
 
-**Open question, now being tested (Section 7): does this amplification
-survive realistic noise?** The verification above is all at zero circuit
-noise. A quick feasibility check found the amplification circuit needs
-roughly an order of magnitude more CX gates than any of the four direct
-counters at comparable read length (~1100 CX at the noiseless-optimal 2
-iterations, vs. low hundreds for the direct counters) — enough, on a rough
-estimate, to matter a great deal once the same depolarizing/thermal/readout
-noise model used everywhere else in this project is applied. `src/experiments/grover_noise.py`
-is built to measure this directly; see Section 7 for its current status.
+**Answered: does this amplification survive realistic noise? No — it
+collapses far faster than direct counting, and under realistic noise it
+collapses even without any gate-error contribution at all.**
+`src/experiments/grover_noise.py` swept iterations (0-4) x the same S1/S2
+scenarios and `P_GRID` used everywhere else in this project, on a fixed test
+case (6 real shifts, 2 leftover, 1 good shift). Under the realistic S2
+scenario, amplification is already destroyed near its own zero-
+depolarizing-error baseline (p_good at p=0.0: 0.157 at 1 iteration, 0.106 at
+2, vs. 0.781/0.945 for the identical circuit under S1 at the same p=0.0) —
+meaning circuit TIME (thermal relaxation across ~900-1900 gate layers, two
+orders of magnitude deeper than a direct counter at comparable read length)
+is enough on its own to erase the advantage, before gate infidelity is even
+considered. Under S1 (depolarizing only), amplification survives a little
+longer but still collapses within the exact p range (0.001-0.01) where the
+four direct counters stay comfortably above 85% correct. Full data,
+figure, and the over-rotation phenomenon this experiment also confirmed
+(success probability oscillates with iteration count and can fall below
+the flat baseline) are in `results/README.md`.
 
 ## 5. Key findings so far, in order of how far they'd move the needle in a paper
 
@@ -240,6 +249,21 @@ is built to measure this directly; see Section 7 for its current status.
    on high-CX-count circuits than the idealized picture suggests), but here
    it closes the gap rather than crossing all the way to a win.
 
+6. **Grover search's amplification collapses far faster than any direct
+   counting circuit — and under realistic noise, it collapses even without
+   any gate-error contribution at all.** At a directly comparable scale
+   (L=2), the four direct counters score 0.89-0.94 correct at the lowest
+   nonzero error rate this project tests (p=0.001, S2); Grover search's
+   P(good shift) at that same p, same scenario, is 0.10-0.15 — barely above
+   the flat 1/8 baseline a coin flip would achieve, and under S2 it is
+   *already* that low at p=0.0, purely from thermal relaxation across the
+   circuit's ~900-1900 gate layers (two orders of magnitude deeper than a
+   direct counter). This is the clearest, most citable limitation finding of
+   the whole Grover-search novelty direction: the search's theoretical query
+   advantage does not survive contact with near-term hardware noise for this
+   oracle construction, at least not without dramatic gate-count reduction
+   or dedicated error mitigation neither of which has been attempted yet.
+
 ## 6. Process notes worth knowing about (things caught and fixed, not swept under the rug)
 
 - An early attempt at the depth-optimal counter passed every simple test but
@@ -270,12 +294,19 @@ below) and is committed — see finding #5 above and `results/README.md`.
 The Grover diffusion operator and amplification loop (prior item 2) are
 also now built and verified — see Section 4.3.
 
-**Currently running: `src/experiments/grover_noise.py`**, the noise-aware
-Grover search experiment described at the end of Section 4.3 — does the
-verified-correct amplification survive the same S1/S2 noise model used
-throughout this project? Sweeps `iterations` (0-4) x the standard P_GRID,
-on a fixed test case with one known good shift among six real shifts (two
-leftover). Results not yet in; see `results/README.md` once complete.
+Nothing is running right now. The noise-aware Grover search experiment
+(`src/experiments/grover_noise.py`) also completed on 2026-09-30 (80/80
+cells, 19.2 minutes) — see finding #6 above and `results/README.md` for the
+full writeup. Building it caught two more real bugs, both fixed and
+documented in the module/commit rather than papered over: a launch mistake
+(forgot `PYTHONPATH=src` when running the script directly, unlike the test
+files which set their own `sys.path`), and a genuinely wrong assumption in
+the harness's own correctness check (it asserted "more Grover iterations
+always finds the good shift," which is false — success probability
+oscillates with iteration count, confirmed directly when the real sweep hit
+the oscillation's trough at iterations=4 and the wrong assertion crashed
+the run; fixed by checking measured results against the closed-form Grover
+formula instead of assuming monotonic improvement).
 
 Two reliability items built this session, both proven necessary in
 practice, not speculative:
@@ -297,17 +328,15 @@ practice, not speculative:
 
 In rough priority order:
 
-1. **Finish and analyze the noise-aware Grover search experiment** (running
-   now, Section 7) — the natural next question now that the search itself
-   is verified correct: does it survive realistic noise, or is its
-   dramatically higher gate count (an order of magnitude more CX gates than
-   any direct counter at comparable length) enough on its own to erase the
-   amplification advantage at noise levels the direct counters handle
-   comfortably? This is a genuinely new empirical question — not answered by
-   QShift-SA or any of the three reference papers.
-2. **Extend the missing L=8 legs** for both the plain and connectivity-aware
+1. **Extend the missing L=8 legs** for both the plain and connectivity-aware
    four-way comparisons, to match the depth of data already collected for
    the original three-way and single-counter noise sweeps.
+2. **Consider whether the Grover-search noise finding (#6) is worth a
+   follow-up mitigation attempt** (e.g. post-selection or ZNE applied to the
+   search circuit, the same techniques that recovered the phase counter from
+   ~33% to ~94% at L=8) or whether it stands as a clean negative result on
+   its own — a judgment call for whoever is shaping the paper's narrative,
+   not something to decide by default.
 3. **Only after 1–2:** begin drafting the paper's results section, per this
    project's own working rule that no narrative claims should be written
    before their supporting data exists and is saved.
@@ -315,7 +344,7 @@ In rough priority order:
 ## 9. Where things live
 
 - `src/` — all circuit and experiment code, one file per counter/technique.
-- `tests/` — the verification suite (119 tests); run with `pytest -q` from the
+- `tests/` — the verification suite (120 tests); run with `pytest -q` from the
   project's `.venv`.
 - `results/` — every experiment's raw output (`.csv`), metadata (`.json`,
   including exact seeds and the git commit that produced it), and a detailed
