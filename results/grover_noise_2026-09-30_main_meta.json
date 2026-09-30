@@ -1,0 +1,38 @@
+{
+  "date": "2026-09-30",
+  "git_commit": "d3b285010db05d58a4fc07417a3c0f8aa682c331",
+  "qiskit": "2.5.2",
+  "qiskit_aer": "0.17.2",
+  "reference": "TACCGAT",
+  "read": "TA",
+  "threshold": 0,
+  "iterations_grid": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "p_grid": [
+    0.0,
+    0.001,
+    0.003,
+    0.005,
+    0.01,
+    0.02,
+    0.03,
+    0.05
+  ],
+  "shots": 1024,
+  "seed_sim": 761,
+  "thermal": {
+    "t1": 100000.0,
+    "t2": 80000.0,
+    "gate_time_1q": 50.0,
+    "gate_time_2q": 300.0
+  },
+  "readout_error": 0.01,
+  "virtual_rz": true,
+  "total_runtime_s": 1149.7253611000488,
+  "rows": 80
+}

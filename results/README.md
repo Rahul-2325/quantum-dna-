@@ -500,6 +500,87 @@ extrapolating the raw, noise-inflated series would.
 Same scope caveat as the standalone pieces above: this is a small, targeted
 probe (4 points), not a systematic grid sweep.
 
+## Noise-aware Grover search: amplification collapses far faster than direct counting
+
+`results/grover_noise_2026-09-30_main.csv`, 80 rows: does the Grover search
+amplification verified noiseless in `src/grover_search.py` survive the SAME
+S1/S2 noise model and `P_GRID` used throughout this project? Fixed test case
+(reference="TACCGAT", read="TA", threshold=0: 6 real shifts, 2 leftover,
+exactly one good shift), swept over `iterations` (0-4) x scenario x p.
+`figures/9_grover_noise.png`.
+
+**Headline finding: under the realistic S2 scenario, amplification is
+already destroyed near its own zero-depolarizing-error baseline** --
+p_good at p=0.0 is only 0.157 (1 iteration) / 0.106 (2 iterations), far
+below the noiseless-circuit values of 0.781 / 0.945 that the SAME circuit
+achieves under S1 (depolarizing only) at the same p=0.0. The difference
+between S1 and S2 at p=0.0 is thermal relaxation and readout error alone
+(S2's depolarizing contribution is genuinely zero at p=0.0) -- meaning
+circuit TIME, not gate infidelity, is enough on its own to erase the
+advantage here. This tracks directly from the feasibility check that
+motivated this experiment: at 1-2 iterations this circuit is already
+900-1900 gate layers deep (`cx_count`/`depth` columns), roughly two orders
+of magnitude beyond the ~10-50 gate layers a direct counter needs at a
+comparable read length -- long enough, relative to this project's T1=100us/
+T2=80us thermal-relaxation timescale (see `THERMAL` in
+`noise_degradation.py`), to decohere the search before it finishes.
+
+**Under S1 (depolarizing only), amplification survives a little longer but
+still collapses within the exact same low-p range where the direct counters
+stay robust.** At L=2 (a directly comparable scale), the four direct
+counters score 0.89-0.94 correct at p=0.001, S2 (`counter_comparison_2026-
+09-23_4way_v2.csv`). At that SAME p=0.001, even under the gentler S1
+scenario, Grover search's p_good has already dropped from 0.781 (1
+iteration, noiseless) to 0.507, and from 0.945 (2 iterations, noiseless) to
+0.432 -- roughly halved by the lowest nonzero error rate this project tests
+anywhere. By p=0.01, every iteration count is back down at the flat 0.125
+baseline under either scenario.
+
+**A real, well-known Grover phenomenon shows up directly in the noiseless
+column, not a bug: success probability OSCILLATES with iteration count.**
+`expected_p_good` (closed-form `sin^2((2t+1)*theta)`) predicts 0.125, 0.781,
+0.945, 0.330, 0.012 for iterations 0-4 -- confirmed by direct measurement at
+p=0.0 (S1): 0.124, 0.775, 0.940, 0.330, 0.010. Running the "right" algorithm
+for too many rounds (iterations=4 here) is worse than not searching at all
+(0.010 vs. the 0.125 flat baseline) -- this "over-rotation" is standard
+Grover behaviour, not specific to this circuit, but it is the reason the
+noise-aware harness verifies measured p_good against this closed-form
+formula rather than assuming more iterations always helps (an earlier draft
+of the harness asserted exactly that and crashed against this circuit's own
+noiseless data before the fix).
+
+**The practically important question this experiment set out to answer:
+does a LOWER iteration count than the noiseless-optimal (2) ever do better
+once realistic noise is included?** Yes, at low p under S1: at p=0.001,
+1 iteration (0.507) clearly beats 2 iterations (0.432), reversing the
+noiseless ranking (0.781 < 0.945) -- 2 iterations needs roughly double the
+CX count of 1 iteration (1104 vs. 510), and that extra noise exposure
+outweighs its higher theoretical peak once any depolarizing error is
+present at all. Under S2, this question is largely moot: even 1 iteration
+is already flattened to near-baseline at p=0.0, so there is no clear regime
+where any iteration count meaningfully outperforms another.
+
+Full picture, S2, p_good (mean single measurement per cell, 1024 shots):
+
+| p | it=0 | it=1 | it=2 | it=3 | it=4 |
+|---|---|---|---|---|---|
+| 0.0 | 0.129 | 0.157 | 0.106 | 0.107 | 0.120 |
+| 0.001 | 0.129 | 0.145 | 0.104 | 0.119 | 0.115 |
+| 0.005 | 0.128 | 0.130 | 0.113 | 0.115 | 0.106 |
+| 0.01 | 0.128 | 0.110 | 0.110 | 0.140 | 0.110 |
+| 0.05 | 0.129 | 0.127 | 0.124 | 0.111 | 0.128 |
+
+Flat baseline is 1/8 = 0.125 (8 = 2^k_shift padded basis states, only 1 of
+which is the true good shift) -- every S2 cell above is within noise of that
+baseline, at every p including zero.
+
+Limitations: single fixed test case (N=8, M=1), not a scan over problem
+size or M/N ratio; 1024 shots per cell (no repeated trials/CI, unlike the
+stratified-pair sweeps elsewhere in this project, since there is only one
+fixed circuit per cell here, not a population of random read/reference
+pairs); all-to-all connectivity only (not yet connectivity-aware, matching
+this project's established practice of doing all-to-all first).
+
 ## Runs to date
 
 | file | grid | rz convention | cells | runtime |
