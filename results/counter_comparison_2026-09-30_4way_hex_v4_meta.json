@@ -1,0 +1,116 @@
+{
+  "date": "2026-09-30",
+  "git_commit": "7e1097d78c10077b50cec08f7271aebd9cc353cb",
+  "qiskit": "2.5.2",
+  "qiskit_aer": "0.17.2",
+  "seed_pairs": 20260920,
+  "seed_sim": 761,
+  "shots": 1024,
+  "pairs_per_m": 8,
+  "levels": [
+    2,
+    4,
+    6
+  ],
+  "p_grid": [
+    0.0,
+    0.001,
+    0.003,
+    0.005,
+    0.01,
+    0.02,
+    0.03,
+    0.05
+  ],
+  "counters": [
+    "adder",
+    "phase",
+    "depth_optimal",
+    "qft_adder"
+  ],
+  "virtual_rz": true,
+  "thermal": {
+    "t1": 100000.0,
+    "t2": 80000.0,
+    "gate_time_1q": 50.0,
+    "gate_time_2q": 300.0
+  },
+  "readout_error": 0.01,
+  "circuit_stats": {
+    "adder_2": {
+      "k": 2,
+      "num_qubits": 8,
+      "depth": 33,
+      "cx": 27
+    },
+    "adder_4": {
+      "k": 3,
+      "num_qubits": 16,
+      "depth": 101,
+      "cx": 111
+    },
+    "adder_6": {
+      "k": 3,
+      "num_qubits": 22,
+      "depth": 197,
+      "cx": 215
+    },
+    "phase_2": {
+      "k": 2,
+      "num_qubits": 8,
+      "depth": 45,
+      "cx": 37
+    },
+    "phase_4": {
+      "k": 3,
+      "num_qubits": 15,
+      "depth": 95,
+      "cx": 110
+    },
+    "phase_6": {
+      "k": 3,
+      "num_qubits": 21,
+      "depth": 105,
+      "cx": 165
+    },
+    "depth_optimal_2": {
+      "k": 2,
+      "num_qubits": 8,
+      "depth": 37,
+      "cx": 28
+    },
+    "depth_optimal_4": {
+      "k": 3,
+      "num_qubits": 16,
+      "depth": 83,
+      "cx": 99
+    },
+    "depth_optimal_6": {
+      "k": 3,
+      "num_qubits": 24,
+      "depth": 89,
+      "cx": 174
+    },
+    "qft_adder_2": {
+      "k": 2,
+      "num_qubits": 8,
+      "depth": 46,
+      "cx": 42
+    },
+    "qft_adder_4": {
+      "k": 3,
+      "num_qubits": 15,
+      "depth": 103,
+      "cx": 133
+    },
+    "qft_adder_6": {
+      "k": 3,
+      "num_qubits": 21,
+      "depth": 132,
+      "cx": 185
+    }
+  },
+  "transpile": "transpile_connectivity_aware",
+  "total_runtime_s": 8612.929423600086,
+  "rows": 960
+}

@@ -180,8 +180,58 @@ Full table (S2, mean over m):
 | 6 | 0.01 | 0.499 | 0.521 | 0.473 | 0.494 | phase |
 | 6 | 0.05 | 0.177 | 0.198 | 0.190 | 0.176 | phase |
 
-Not yet done: the same 4-way grid under heavy-hex connectivity, and L=8 for
-this comparison.
+Not yet done: L=8 for this comparison.
+
+## 4-way noise comparison under heavy-hex connectivity (the open question above, answered)
+
+`results/counter_comparison_2026-09-30_4way_hex_v4.csv`, 960 rows: the exact
+same 4-way grid immediately above (adder, phase, depth-optimal, qft-adder;
+L=2,4,6), with ONLY the transpile target changed to the same heavy-hex
+connectivity-aware routing used by the 3-way comparison below
+(`connectivity.transpile_connectivity_aware`). Same scenarios/p-grid/seeds/
+pairs/shots. All 60 S1 p=0 control cells exactly 1.0, completed in 143.5
+minutes under the new crash-resilient supervisor (`supervised_run.py` +
+`counter_comparison.py --resume`; needed zero retries this run -- it
+completed cleanly on attempt 1). `figures/6_counter_comparison_noise_4way_hex_v4.png`.
+
+**Adder/depth-optimal's numbers barely move from the 3-way hex run** (e.g.
+L=2, p=0.01: adder 0.816 there vs 0.817 here; depth-optimal 0.795 vs 0.794)
+-- expected, since adding a fourth counter to the grid doesn't change how the
+other three are simulated, and is a useful sanity check that nothing about
+the harness itself changed between runs.
+
+**This answers the open question the all-to-all 4-way run left flagged
+(finding #5 in PROJECT_STATUS.md): does qft-adder's all-to-all loss survive
+realistic connectivity, the way depth-optimal's all-to-all loss did NOT?**
+Partially. qft-adder still never wins a single cell -- but at L=6 it stops
+being the clear loser and closes most of the gap: L=6, p=0.01 it scores
+0.276, beating adder's 0.255 outright and sitting close behind
+depth-optimal (0.293) and phase (0.294, the narrow winner); at L=6, p=0.05
+all four counters are within 0.003 of each other (0.129-0.132). This is the
+same qualitative story as depth-optimal's own reversal: a counter's
+high all-to-all CX count stops being the dominant cost once realistic
+routing overhead falls more evenly across circuits with different
+topologies, but here it closes the gap rather than crossing all the way to
+a win. At L=2 and L=4, qft-adder is still last and by a clear margin (e.g.
+L=4, p=0.01: adder 0.471, depth-optimal 0.458, phase 0.410, qft-adder 0.363).
+
+Full picture per L (S2, mean over m):
+
+| L | p | adder | phase | depth-optimal | qft-adder | winner |
+|---|---|---|---|---|---|---|
+| 2 | 0.01 | 0.817 | 0.725 | 0.794 | 0.697 | adder |
+| 2 | 0.05 | 0.535 | 0.417 | 0.525 | 0.381 | adder |
+| 4 | 0.01 | 0.471 | 0.410 | 0.458 | 0.363 | adder |
+| 4 | 0.05 | 0.173 | 0.151 | **0.180** | 0.140 | depth-optimal |
+| 6 | 0.01 | 0.255 | **0.294** | 0.293 | 0.276 | phase (barely) |
+| 6 | 0.05 | 0.131 | 0.130 | **0.132** | 0.129 | depth-optimal (barely) |
+
+Not yet done: L=8 for this comparison, and whether a different heavy-hex
+distance/layout choice or SABRE seed changes the exact L=6 crossover point
+(as with the 3-way hex run, the qualitative pattern -- qft-adder closing the
+gap at longer reads under real connectivity -- is unlikely to be a pure seed
+artifact given it lines up with depth-optimal's own established reversal,
+but has not been checked for seed sensitivity).
 
 ## Connectivity-aware resimulation: a real reversal, not just an extension
 
